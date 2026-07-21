@@ -1,0 +1,5 @@
+{
+  "ollama_url": "http://localhost:11434",
+  "ollama_model": "llama3",
+  "app_name": "CareerKit Local"
+}

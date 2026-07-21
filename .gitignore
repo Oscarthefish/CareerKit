@@ -1,0 +1,32 @@
+# Operating system and editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+backend/venv/
+backend/.venv/
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/tsconfig.tsbuildinfo
+npm-debug.log*
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+config/settings.json
+
+# Private user data and generated exports
+data/**
+!data/.gitkeep
+
