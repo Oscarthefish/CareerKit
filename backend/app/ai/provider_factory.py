@@ -10,7 +10,8 @@ def get_provider() -> AIProvider:
     if _provider is None:
         _provider = OllamaProvider(
             base_url=get_setting("ollama_url", "http://localhost:11434"),
-            model=get_setting("ollama_model", "llama3"),
+            model=get_setting("ollama_model", "llama3.1"),
+            num_ctx=int(get_setting("ollama_num_ctx", 16384)),
         )
     return _provider
 

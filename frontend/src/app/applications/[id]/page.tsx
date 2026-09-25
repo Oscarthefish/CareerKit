@@ -548,6 +548,17 @@ function TabCoverLetter({ app, refresh, appId }: { app: JobApplication; refresh:
 
 function TabCVNotes({ app, refresh, appId }: { app: JobApplication; refresh: () => void; appId: number }) {
   const [showTailored, setShowTailored] = useState(false)
+  const [editingTailored, setEditingTailored] = useState(false)
+  const [tailoredValue, setTailoredValue] = useState(app.tailored_cv || '')
+  const [savingTailored, setSavingTailored] = useState(false)
+
+  const saveTailored = async () => {
+    setSavingTailored(true)
+    await updateApplication(appId, { tailored_cv: tailoredValue })
+    setSavingTailored(false)
+    setEditingTailored(false)
+    refresh()
+  }
 
   if (!app.cv_adjustment_notes) {
     return (
@@ -588,11 +599,12 @@ function TabCVNotes({ app, refresh, appId }: { app: JobApplication; refresh: () 
             <p className="text-xs text-gray-400 mt-0.5">A version of your master CV with the above changes applied, generated for this specific role.</p>
           </div>
           <div className="flex gap-2">
-            {app.tailored_cv && (
+            {app.tailored_cv && !editingTailored && (
               <>
                 <button onClick={() => setShowTailored(!showTailored)} className="btn-ghost btn-sm">
                   {showTailored ? 'Hide' : 'View'}
                 </button>
+                <button onClick={() => { setTailoredValue(app.tailored_cv || ''); setEditingTailored(true); setShowTailored(true) }} className="btn-secondary btn-sm">Edit</button>
                 <a href={exportApplication(appId, 'md', 'tailored-cv')} download className="btn-ghost btn-sm">MD</a>
                 <a href={exportApplication(appId, 'docx', 'tailored-cv')} download className="btn-ghost btn-sm">DOCX</a>
                 <a href={exportApplication(appId, 'pdf', 'tailored-cv')} download className="btn-ghost btn-sm">PDF</a>
@@ -601,12 +613,26 @@ function TabCVNotes({ app, refresh, appId }: { app: JobApplication; refresh: () 
             <AIButton
               label={app.tailored_cv ? 'Regenerate' : 'Generate Tailored CV'}
               loadingLabel="Tailoring CV..."
-              onClick={async () => { await generateTailoredCV(appId); refresh(); setShowTailored(true) }}
+              onClick={async () => { await generateTailoredCV(appId); refresh(); setShowTailored(true); setEditingTailored(false) }}
               variant={app.tailored_cv ? 'secondary' : 'primary'}
             />
           </div>
         </div>
-        {showTailored && app.tailored_cv && (
+        {showTailored && editingTailored && (
+          <div className="border-t border-gray-100">
+            <textarea
+              className="w-full p-6 text-sm text-gray-800 border-0 focus:ring-0 outline-none resize-none font-sans leading-relaxed"
+              rows={30}
+              value={tailoredValue}
+              onChange={(e) => setTailoredValue(e.target.value)}
+            />
+            <div className="px-6 py-3 border-t border-gray-100 flex gap-2">
+              <button onClick={saveTailored} disabled={savingTailored} className="btn-primary btn-sm">{savingTailored ? 'Saving...' : 'Save'}</button>
+              <button onClick={() => setEditingTailored(false)} className="btn-ghost btn-sm">Cancel</button>
+            </div>
+          </div>
+        )}
+        {showTailored && !editingTailored && app.tailored_cv && (
           <div className="p-4 border-t border-gray-100">
             <CVRenderer markdown={app.tailored_cv} />
           </div>
@@ -643,6 +669,23 @@ function TabInterviewPrep({ app, refresh, appId }: { app: JobApplication; refres
     { key: 'scenario_questions', title: 'Scenario Questions', promptField: 'suggested_approach' },
     { key: 'gap_questions', title: 'Gap Questions', promptField: 'suggested_framing' },
   ]
+
+  const hasContent =
+    sections.some(({ key }) => (prep[key] as InterviewQuestion[] | undefined)?.length) ||
+    prep.brush_up_topics?.length ||
+    prep.preparation_plan?.length ||
+    prep.questions_to_ask_recruiter?.length ||
+    prep.questions_to_ask_employer?.length
+
+  if (!hasContent) {
+    return (
+      <div className="card p-8 text-center">
+        <p className="text-gray-500 text-sm mb-1">The last generation did not return a usable interview prep pack.</p>
+        <p className="text-xs text-gray-400 mb-4">This can happen with a small local model. Try again, or switch to a larger model in Settings.</p>
+        <AIButton label="Regenerate" loadingLabel="Preparing..." onClick={async () => { await generateInterviewPrep(appId); refresh() }} />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">

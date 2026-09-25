@@ -15,7 +15,9 @@ export interface Profile {
 export interface WorkExperience {
   id: number
   company: string
+  employer_public_name: string | null
   role: string
+  alternative_titles: string[]
   start_date: string | null
   end_date: string | null
   is_current: boolean
@@ -24,14 +26,18 @@ export interface WorkExperience {
   key_responsibilities: string[]
   technologies: string[]
   order_index: number
+  confidentiality_level: string
 }
 
 export interface Skill {
   id: number
   name: string
+  aliases: string[]
   category: string | null
   proficiency: string | null
   years_experience: number | null
+  last_used: string | null
+  production_experience: boolean
   confidence: string
   notes: string | null
 }
@@ -45,6 +51,37 @@ export interface Certification {
   credential_id: string | null
   url: string | null
   in_progress: boolean
+  status: string
+  notes: string | null
+}
+
+export interface Training {
+  id: number
+  title: string
+  provider: string | null
+  date: string | null
+  delivery_type: string | null
+  duration: string | null
+  completion_status: string
+  related_certification: string | null
+  tools: string[]
+  skills: string[]
+  evidence: string | null
+  include_by_default: boolean
+  confidence: string
+  notes: string | null
+}
+
+export interface CommunityInvolvement {
+  id: number
+  event: string
+  location: string | null
+  date: string | null
+  participation_type: string
+  notes: string | null
+  evidence: string | null
+  include_on_cv: boolean
+  include_on_linkedin: boolean
 }
 
 export interface Achievement {
@@ -58,6 +95,7 @@ export interface Achievement {
   who_benefited: string | null
   measurable_outcome: string | null
   confidence: string
+  confidentiality_level: string
   bullet_plain: string | null
   bullet_strong: string | null
   bullet_senior: string | null
@@ -76,6 +114,7 @@ export interface Project {
   url: string | null
   date_range: string | null
   confidence: string
+  confidentiality_level: string
 }
 
 export interface EvidenceItem {
@@ -87,6 +126,7 @@ export interface EvidenceItem {
   outcome: string | null
   value: string | null
   confidence: string
+  confidentiality_level: string
   notes: string | null
   source: string | null
 }
@@ -219,6 +259,47 @@ export interface InterviewPrep {
   brush_up_topics: BrushUpTopic[]
   preparation_plan: { day: string; tasks: string[] }[]
   company_research_notes: string
+}
+
+export interface ReachOut {
+  id: number
+  company_name: string
+  website_url: string | null
+  linkedin_url: string | null
+  industry: string | null
+  location: string | null
+  company_size: string | null
+  research_summary: string | null
+  culture_notes: string | null
+  tech_security_notes: string | null
+  recent_news: string | null
+  angle: string | null
+  contact_name: string | null
+  contact_role: string | null
+  contact_email: string | null
+  status: string
+  date_identified: string | null
+  date_sent: string | null
+  follow_up_date: string | null
+  intro_letter: string | null
+  cv_notes: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ReachOutSummary {
+  id: number
+  company_name: string
+  industry: string | null
+  location: string | null
+  status: string
+  date_identified: string | null
+  date_sent: string | null
+  follow_up_date: string | null
+  created_at: string
+  has_research: boolean
+  has_letter: boolean
 }
 
 export interface ScanSearch {

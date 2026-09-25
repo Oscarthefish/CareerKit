@@ -8,16 +8,39 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..models.job import JobApplication
-from ..services.profile_service import build_profile_summary, get_banned_phrases_instruction
+from ..services.profile_service import (
+    build_profile_summary,
+    compact_profile_for_prompt,
+    former_employer_names,
+    get_banned_phrases_instruction,
+    get_banned_phrases_list,
+    in_progress_cert_names,
+)
 from ..services.prompt_service import fill_prompt
 from ..services.application_service import persist_application_files
 from ..ai.provider_factory import get_provider
+from ..ai.language import to_british
 from ..parsers.router import extract_text, SUPPORTED_EXTENSIONS
 from ..exporters import markdown_exporter, docx_exporter, pdf_exporter
 from ..storage.file_storage import get_application_folder
 
 router = APIRouter(prefix="/api/applications", tags=["applications"])
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+_UNKNOWN_COMPANY_VALUES = {"unknown", "n/a", "na", "tbc", "tbd", "none", ""}
+
+
+def _company_display(app: JobApplication) -> str:
+    """The company field sometimes literally holds a placeholder like "Unknown"
+    (e.g. from a scraped job listing with no employer named). Treating that as
+    a real company name feeds it straight into prompts, and a model asked to
+    write about "Unknown" will invent a plausible-sounding substitute (a vague
+    location descriptor, etc.) rather than doing the sensible thing and just
+    not naming a company at all."""
+    company = (app.company or "").strip()
+    if company.lower() in _UNKNOWN_COMPANY_VALUES:
+        return "the company"
+    return company
 
 
 def _serialize(app: JobApplication) -> dict:
@@ -115,6 +138,7 @@ class ApplicationUpdate(BaseModel):
     session_notes: Optional[str] = None
     cover_letter: Optional[str] = None
     cv_adjustment_notes: Optional[str] = None
+    tailored_cv: Optional[str] = None
     linkedin_angle: Optional[str] = None
     recruiter_message: Optional[str] = None
 
@@ -214,14 +238,26 @@ async def generate_scorecard(app_id: int, db: Session = Depends(get_db)):
     if not app.job_analysis:
         raise HTTPException(status_code=400, detail="Run job analysis first.")
 
-    profile = build_profile_summary(db)
+    # Full mode: an honest internal self-assessment can draw on the whole record,
+    # including recruiter/interview-only context, since this never leaves the app.
+    profile = build_profile_summary(db, mode="full")
     prompt = fill_prompt(
         "match_scorecard",
         PROFILE_SUMMARY=json.dumps(profile, indent=2),
         JOB_ANALYSIS=app.job_analysis,
     )
     provider = get_provider()
-    scorecard = await provider.generate_json(prompt)
+    try:
+        scorecard = await provider.generate_json(
+            prompt,
+            required_keys=["overall_fit", "strong_matches", "genuine_gaps", "do_not_claim"],
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"The local model returned an unusable response ({e}). Try regenerating, "
+                   "or pick a larger model in Settings.",
+        )
     app.match_scorecard = json.dumps(scorecard)
     db.commit()
     persist_application_files(db, app_id)
@@ -244,12 +280,18 @@ async def generate_cover_letter(app_id: int, db: Session = Depends(get_db)):
         JOB_ANALYSIS=app.job_analysis,
         MATCH_SCORECARD=app.match_scorecard or "{}",
         RECRUITER_NAME=app.recruiter_name or "Hiring Manager",
-        COMPANY_NAME=app.company or "the company",
+        COMPANY_NAME=_company_display(app),
         ROLE_TITLE=app.role or "the role",
         BANNED_PHRASES=banned,
     )
     provider = get_provider()
-    letter = await provider.generate(prompt)
+    letter = to_british(await provider.generate(
+        prompt,
+        banned_phrases=get_banned_phrases_list(db),
+        flag_years_experience=True,
+        in_progress_certs=in_progress_cert_names(profile),
+        former_employers=former_employer_names(profile),
+    ))
     app.cover_letter = letter
     db.commit()
     persist_application_files(db, app_id)
@@ -275,6 +317,8 @@ async def generate_cv_notes(app_id: int, db: Session = Depends(get_db)):
 
     prompt = f"""You are a CV advisor helping a New Zealand cyber security professional tailor their CV for a specific role.
 
+Write everything in British / New Zealand English. Never use American spelling.
+
 {banned}
 
 
@@ -296,7 +340,12 @@ ATS Keywords: {', '.join(scorecard.get('ats_keywords_to_include', [])[:12])}
 Candidate Profile Summary: {profile.get('professional_summary', '')}
 """
     provider = get_provider()
-    notes = await provider.generate(prompt)
+    notes = to_british(await provider.generate(
+        prompt,
+        banned_phrases=get_banned_phrases_list(db),
+        in_progress_certs=in_progress_cert_names(profile),
+        former_employers=former_employer_names(profile),
+    ))
     app.cv_adjustment_notes = notes
     db.commit()
     persist_application_files(db, app_id)
@@ -311,17 +360,39 @@ async def generate_interview_prep(app_id: int, db: Session = Depends(get_db)):
     if not app.job_analysis:
         raise HTTPException(status_code=400, detail="Run job analysis first.")
 
-    profile = build_profile_summary(db)
+    profile = compact_profile_for_prompt(build_profile_summary(db, mode="interview_prep"))
     banned = get_banned_phrases_instruction(db)
-    prompt = fill_prompt(
-        "interview_prep",
+    common = dict(
         PROFILE_SUMMARY=json.dumps(profile, indent=2),
         JOB_ANALYSIS=app.job_analysis,
         MATCH_SCORECARD=app.match_scorecard or "{}",
         BANNED_PHRASES=banned,
     )
     provider = get_provider()
-    prep = await provider.generate_json(prompt)
+
+    # Two focused calls rather than one huge one: an 8B model produces far better
+    # structured output on a smaller task, and the questions pack and the study
+    # plan are independent.
+    try:
+        questions = await provider.generate_json(
+            fill_prompt("interview_prep", **common),
+            required_keys=["technical_questions", "behavioural_questions",
+                           "scenario_questions", "gap_questions"],
+        )
+        study = await provider.generate_json(
+            fill_prompt("interview_prep_study", **common),
+            required_keys=["brush_up_topics", "preparation_plan"],
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"The local model returned an unusable response ({e}). Try regenerating, "
+                   "or pick a larger model in Settings.",
+        )
+
+    prep = {**questions, **study}
+    prep.setdefault("company_research_notes", "Placeholder - add your own research here")
+
     app.interview_prep = json.dumps(prep)
     db.commit()
     persist_application_files(db, app_id)
@@ -351,14 +422,14 @@ Write:
 3. A short recruiter intro message (max 300 chars) they can send on LinkedIn
 4. 3-5 skills to pin on their LinkedIn profile for this role
 
-Role: {app.role} at {app.company or 'the company'}
+Role: {app.role} at {_company_display(app)}
 Required Skills: {', '.join(analysis.get('required_skills', [])[:10])}
 Suggested Angle: {scorecard.get('suggested_angle', '')}
 
 Format as markdown with clear headers.
 """
     provider = get_provider()
-    angle = await provider.generate(prompt)
+    angle = to_british(await provider.generate(prompt, banned_phrases=get_banned_phrases_list(db)))
     app.linkedin_angle = angle
     db.commit()
     persist_application_files(db, app_id)
@@ -378,6 +449,7 @@ async def generate_tailored_cv(app_id: int, db: Session = Depends(get_db)):
     if not master or not master.content_markdown:
         raise HTTPException(status_code=400, detail="No master CV found. Generate your master CV first.")
 
+    profile = build_profile_summary(db)
     banned = get_banned_phrases_instruction(db)
     job_analysis = app.job_analysis or "{}"
     prompt = fill_prompt(
@@ -386,11 +458,17 @@ async def generate_tailored_cv(app_id: int, db: Session = Depends(get_db)):
         CV_NOTES=app.cv_adjustment_notes,
         JOB_ANALYSIS=job_analysis,
         ROLE_TITLE=app.role or "the role",
-        COMPANY_NAME=app.company or "the company",
+        COMPANY_NAME=_company_display(app),
         BANNED_PHRASES=banned,
     )
     provider = get_provider()
-    content = await provider.generate(prompt)
+    content = to_british(await provider.generate(
+        prompt,
+        banned_phrases=get_banned_phrases_list(db),
+        flag_years_experience=True,
+        in_progress_certs=in_progress_cert_names(profile),
+        former_employers=former_employer_names(profile),
+    ))
     app.tailored_cv = content
     db.commit()
     persist_application_files(db, app_id)

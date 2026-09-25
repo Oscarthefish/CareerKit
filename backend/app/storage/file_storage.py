@@ -42,6 +42,21 @@ def save_example_cv_files(filename: str, analysis_md: str, structure: dict) -> t
     return analysis_path, structure_path
 
 
+def get_reachout_folder(company: str) -> Path:
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    safe_company = "".join(c if c.isalnum() or c in "-_" else "_" for c in (company or "unknown"))
+    folder_name = f"{date_str}_{safe_company[:40]}"
+    reachouts_dir = DATA_DIR / "reachouts"
+    folder = reachouts_dir / folder_name
+    suffix = 2
+    while folder.exists():
+        folder = reachouts_dir / f"{folder_name}_{suffix}"
+        suffix += 1
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "exports").mkdir(exist_ok=True)
+    return folder
+
+
 def get_exports_dir() -> Path:
     p = DATA_DIR / "exports"
     p.mkdir(parents=True, exist_ok=True)

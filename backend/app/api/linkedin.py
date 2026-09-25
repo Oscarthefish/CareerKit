@@ -11,7 +11,8 @@ router = APIRouter(prefix="/api/linkedin", tags=["linkedin"])
 
 @router.post("/generate")
 async def generate_linkedin(db: Session = Depends(get_db)):
-    profile = build_profile_summary(db)
+    # LinkedIn is always the public-safe mode: only confidentiality_level "public" items are eligible.
+    profile = build_profile_summary(db, mode="linkedin")
     banned = get_banned_phrases_instruction(db)
     prompt = fill_prompt("linkedin_generation", PROFILE_JSON=json.dumps(profile, indent=2), BANNED_PHRASES=banned)
     provider = get_provider()

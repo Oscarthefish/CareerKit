@@ -17,6 +17,7 @@ export default function CVPage() {
   const [showReview, setShowReview] = useState(false)
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [mode, setMode] = useState('cv_safe')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -32,7 +33,7 @@ export default function CVPage() {
   useEffect(() => { load() }, [load])
 
   const handleGenerate = async () => {
-    const data: any = await generateCV()
+    const data: any = await generateCV(mode)
     setCvContent(data.content_markdown)
     setCvId(data.id)
   }
@@ -90,6 +91,15 @@ export default function CVPage() {
             <p className="text-sm text-gray-500 mb-6">
               Generate your master CV from your profile, or paste one in below.
             </p>
+            <div className="max-w-xs mx-auto mb-4 text-left">
+              <label className="label">Confidentiality Mode</label>
+              <select className="input" value={mode} onChange={(e) => setMode(e.target.value)}>
+                <option value="cv_safe">CV-safe (default)</option>
+                <option value="public">Public / redacted</option>
+                <option value="recruiter">Recruiter version</option>
+                <option value="full">Full private (internal use only)</option>
+              </select>
+            </div>
             <AIButton
               label="Generate Master CV from Profile"
               loadingLabel="Generating CV..."
@@ -102,6 +112,15 @@ export default function CVPage() {
             <div className="lg:col-span-1 space-y-4">
               <div className="card p-4 space-y-2">
                 <h3 className="text-sm font-semibold text-gray-700">Actions</h3>
+                <div>
+                  <label className="label">Confidentiality Mode</label>
+                  <select className="input" value={mode} onChange={(e) => setMode(e.target.value)}>
+                    <option value="cv_safe">CV-safe (default)</option>
+                    <option value="public">Public / redacted</option>
+                    <option value="recruiter">Recruiter version</option>
+                    <option value="full">Full private (internal use only)</option>
+                  </select>
+                </div>
                 <AIButton label="Regenerate CV" loadingLabel="Generating..." onClick={handleGenerate} className="w-full" />
                 {!editing && (
                   <button onClick={startEdit} className="btn-secondary w-full">Edit Manually</button>

@@ -32,27 +32,42 @@ def export(markdown_content: str, output_path: str | Path) -> Path:
             doc.add_paragraph()
             continue
 
+        # Manual page-break marker — lets you force a break by hand wherever
+        # the automatic keep-together logic still isn't quite right.
+        if line_stripped == "<!-- pagebreak -->":
+            doc.add_page_break()
+            continue
+
         if line_stripped.startswith("### "):
             heading = doc.add_heading(line_stripped[4:], level=3)
             heading.runs[0].font.color.rgb = RGBColor(0x1a, 0x56, 0x76)
+            heading.paragraph_format.keep_with_next = True
+            heading.paragraph_format.keep_together = True
         elif line_stripped.startswith("## "):
             heading = doc.add_heading(line_stripped[3:], level=2)
             heading.runs[0].font.color.rgb = RGBColor(0x0d, 0x3b, 0x52)
+            heading.paragraph_format.keep_with_next = True
+            heading.paragraph_format.keep_together = True
         elif line_stripped.startswith("# "):
             heading = doc.add_heading(line_stripped[2:], level=1)
             heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            heading.paragraph_format.keep_with_next = True
         elif line_stripped.startswith("- ") or line_stripped.startswith("* "):
             para = doc.add_paragraph(style="List Bullet")
             _add_inline(para, line_stripped[2:])
+            para.paragraph_format.keep_together = True
         elif line_stripped.startswith("**") and line_stripped.endswith("**"):
             para = doc.add_paragraph()
             run = para.add_run(line_stripped.strip("*"))
             run.bold = True
+            para.paragraph_format.keep_together = True
+            para.paragraph_format.keep_with_next = True
         elif re.match(r"^---+$", line_stripped):
             doc.add_paragraph("_" * 80)
         else:
             para = doc.add_paragraph()
             _add_inline(para, line_stripped)
+            para.paragraph_format.keep_together = True
 
     doc.save(str(p))
     return p

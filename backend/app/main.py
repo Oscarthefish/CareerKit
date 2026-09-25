@@ -2,13 +2,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .core.database import init_db
-from .api import profile, cv, applications, examples, linkedin, settings, ai, scanner
+from .api import profile, cv, applications, examples, linkedin, settings, ai, scanner, reachouts
 
 app = FastAPI(title="CareerKit Local", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:3000", "http://127.0.0.1:3000",
+        "http://localhost:8899", "http://127.0.0.1:8899",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,3 +36,4 @@ app.include_router(linkedin.router)
 app.include_router(settings.router)
 app.include_router(ai.router)
 app.include_router(scanner.router)
+app.include_router(reachouts.router)

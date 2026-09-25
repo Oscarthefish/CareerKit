@@ -30,3 +30,6 @@ config/settings.json
 data/**
 !data/.gitkeep
 
+
+# Personal profile seeding script - contains real career/certification data
+backend/app/seed_profile.py

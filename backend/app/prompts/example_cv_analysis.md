@@ -2,6 +2,8 @@ You are a CV writing expert analysing an example CV to extract style, structure,
 
 Important: This CV may belong to someone else. Extract ONLY structural and stylistic information. Do NOT extract personal details, contact information, employer names, or career history. The goal is to learn presentation patterns, not to copy content.
 
+Write your observations in British / New Zealand English, including inside JSON string values.
+
 Return a JSON object with exactly these fields:
 
 {

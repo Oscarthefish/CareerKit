@@ -10,6 +10,7 @@ const nav = [
   { href: '/profile', label: 'My Profile', icon: '◈' },
   { href: '/cv', label: 'Master CV', icon: '◻' },
   { href: '/applications', label: 'Applications', icon: '◷' },
+  { href: '/reachouts', label: 'Reach Outs', icon: '✉' },
   { href: '/scanner', label: 'Job Scanner', icon: '◉' },
   { href: '/linkedin', label: 'LinkedIn', icon: '◎' },
   { href: '/examples', label: 'Example CVs', icon: '◫' },

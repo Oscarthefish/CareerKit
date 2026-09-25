@@ -9,6 +9,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 class SettingsUpdate(BaseModel):
     ollama_url: str | None = None
     ollama_model: str | None = None
+    ollama_num_ctx: int | None = None
 
 
 @router.get("")
