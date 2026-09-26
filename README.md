@@ -247,13 +247,13 @@ Go to Settings in the app, or edit `config/settings.json`:
 {
   "ollama_url": "http://localhost:11434",
   "ollama_model": "llama3.1",
-  "ollama_num_ctx": 16384
+  "ollama_num_ctx": 32768
 }
 ```
 
-- `llama3.1` (default) — large context window, needed for Job Match/ATS/Recruiter Readiness prompts.
+- `llama3.1` (default) — large context window, needed for Job Match/ATS/Recruiter Readiness prompts, and for CV generation itself once your profile has built up a reasonable number of achievements and skills (the full profile is sent to the model on every CV generation).
 - `llama3.1:70b` — better quality, slower, needs considerably more RAM.
-- `llama3`, `mistral`, `phi3` — will work for simpler generation (cover letters, interview prep) but may truncate or produce unreliable JSON on the larger analysis prompts; lower `ollama_num_ctx` accordingly if you switch to one of these and hit memory limits, but don't go below ~12,288 or the Job Match/ATS prompts will start truncating.
+- `llama3`, `mistral`, `phi3` — will work for simpler generation (cover letters, interview prep) but may truncate or produce unreliable JSON on the larger analysis prompts; lower `ollama_num_ctx` accordingly if you switch to one of these and hit memory limits, but don't go below ~12,288 or the Job Match/ATS/CV generation prompts will start truncating — a truncated CV generation prompt drops the formatting rules and produces a CV missing whole sections (no bullets, no Professional Experience), not just a weaker one, so this is worth getting right.
 
 ---
 

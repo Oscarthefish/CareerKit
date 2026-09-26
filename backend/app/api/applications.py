@@ -359,27 +359,29 @@ async def generate_job_match(app_id: int, db: Session = Depends(get_db)):
     return {"job_match_result": result}
 
 
-class CustomCVRequest(BaseModel):
-    selected_fixes: list[str] = []
-
-
 @router.post("/{app_id}/custom-cv")
-async def generate_custom_cv(app_id: int, body: CustomCVRequest, db: Session = Depends(get_db)):
-    """Custom CV Creation + Rescan: applies ONLY the SAFE_OPTIMISATION fixes
-    the user selected from the Job Match report, never anything else, then
-    re-scans the result so the improvement is measurable rather than asserted.
+async def generate_custom_cv(app_id: int, db: Session = Depends(get_db)):
+    """Custom CV Creation + Rescan: generates a role-tailored CV by selecting
+    the strongest real evidence for THIS job from the Job Match report already
+    computed for the application (see services/matching/selection.py) -
+    rather than the full Master CV with a few words patched in. Selection is
+    deterministic, driven entirely by the evidence CareerKit already computed
+    (see selection.py's docstring) - there is nothing for the user to pick,
+    since nothing here can add unsupported content regardless of choice.
+    Then re-scans the result so the improvement is measurable rather than
+    asserted.
 
     Job Match is deliberately NOT recomputed here: it measures evidence
-    against the candidate's structured Master CV data, which a wording-only
-    CV edit cannot change (see custom_cv.md) - re-running it would just
-    reproduce the same number at the cost of two more LLM calls. ATS
-    Compatibility and Recruiter Readiness are text-driven and genuinely can
-    (and should) move, so those are rescanned for real."""
+    against the candidate's structured profile data, which selecting a
+    subset of that same data for display doesn't change - re-running it
+    would just reproduce the same number at the cost of two more LLM calls.
+    ATS Compatibility and Recruiter Readiness are text-driven and genuinely
+    can (and should) move, so those are rescanned for real."""
     from ..models.analysis import AnalysisSnapshot
-    from ..models.cv import CVVersion
     from ..services.ats.checks import run_ats_check
-    from ..services.matching.recommendations import select_safe_fixes
+    from ..services.matching.selection import select_evidence_for_cv
     from ..services.recruiter.scoring import _validate_review, compute_recruiter_readiness
+    from .cv import apply_cv_safety_nets
 
     app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
     if not app:
@@ -387,29 +389,29 @@ async def generate_custom_cv(app_id: int, body: CustomCVRequest, db: Session = D
     if not app.job_match_result:
         raise HTTPException(status_code=400, detail="Generate a Job Match report first.")
 
-    master = db.query(CVVersion).order_by(CVVersion.id.desc()).first()
-    if not master or not master.content_markdown:
-        raise HTTPException(status_code=400, detail="No master CV found. Generate your master CV first.")
-
     job_match_result = json.loads(app.job_match_result)
-    approved = select_safe_fixes(job_match_result, body.selected_fixes)
-    if not approved:
-        raise HTTPException(
-            status_code=400,
-            detail="None of the selected changes are supported by evidence in your Master CV. "
-                   "Only changes tagged 'Safe optimisation' can be applied.",
-        )
+    requirement_coverage = job_match_result.get("requirement_coverage", [])
 
-    profile = build_profile_summary(db)
+    # cv_safe, not "full": Job Match itself is allowed to match against
+    # confidential/recruiter_only evidence to score accurately, but nothing
+    # at that confidentiality level should ever be written onto an actual CV
+    # going out to an employer - the same rule the Master CV generator
+    # follows by using this mode as its own default.
+    profile = build_profile_summary(db, mode="cv_safe")
+    selected_profile = select_evidence_for_cv(profile, requirement_coverage)
+
+    terminology = sorted({
+        row["name"] for row in requirement_coverage
+        if row.get("type") in ("hard_skill", "tool", "methodology", "certification")
+    })
+
     banned = get_banned_phrases_instruction(db)
     prompt = fill_prompt(
-        "custom_cv",
-        MASTER_CV=master.content_markdown,
-        APPROVED_CHANGES=json.dumps(
-            [{"requirement": f["requirement"], "change": f["message"]} for f in approved], indent=2
-        ),
+        "custom_cv_generate",
+        PROFILE_JSON=json.dumps(selected_profile, indent=2),
         ROLE_TITLE=app.role or "the role",
         COMPANY_NAME=_company_display(app),
+        JD_TERMINOLOGY=", ".join(terminology) if terminology else "(none extracted)",
         BANNED_PHRASES=banned,
     )
     provider = get_provider()
@@ -427,10 +429,15 @@ async def generate_custom_cv(app_id: int, body: CustomCVRequest, db: Session = D
             detail=f"The local model returned an unusable response ({e}). Try again, "
                    "or pick a larger model in Settings.",
         )
+    custom_cv = apply_cv_safety_nets(custom_cv, selected_profile)
 
-    applied_names = [f["requirement"] for f in approved]
+    selection_summary = (
+        f"Selected {len(selected_profile.get('achievements', []))} of {len(profile.get('achievements', []))} achievements "
+        f"and {len(selected_profile.get('skills', []))} of {len(profile.get('skills', []))} skills as relevant to this role"
+    )
+
     app.custom_cv = custom_cv
-    app.custom_cv_fixes_applied = json.dumps(applied_names)
+    app.custom_cv_fixes_applied = json.dumps([selection_summary])
     db.commit()
 
     ats_after = run_ats_check(custom_cv)
@@ -471,7 +478,7 @@ async def generate_custom_cv(app_id: int, body: CustomCVRequest, db: Session = D
     persist_application_files(db, app_id)
     return {
         "custom_cv": custom_cv,
-        "applied_fixes": applied_names,
+        "selection_summary": selection_summary,
         "before": before,
         "after": after,
         "ats_check": ats_after,

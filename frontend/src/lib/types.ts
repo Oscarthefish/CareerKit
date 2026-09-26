@@ -329,7 +329,7 @@ export interface CustomCvScores {
 
 export interface CustomCvResult {
   custom_cv: string
-  applied_fixes: string[]
+  selection_summary: string
   before: CustomCvScores
   after: CustomCvScores
   ats_check: AtsCheckResult

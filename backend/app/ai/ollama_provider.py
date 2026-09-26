@@ -99,7 +99,13 @@ class OllamaProvider(AIProvider):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.num_ctx = num_ctx
-        self.timeout = 300.0
+        # A bigger num_ctx means slower prompt processing as well as slower
+        # generation - as a profile grows (more achievements, more skills),
+        # the biggest prompts (CV generation, Job Match) can genuinely take
+        # longer than 300s on CPU/modest-GPU hardware. Scale the timeout with
+        # the context size rather than hardcoding a value that was only ever
+        # sized for the smaller prompts this app started with.
+        self.timeout = max(300.0, num_ctx / 32768 * 900.0)
 
     def _system(self, system: Optional[str]) -> str:
         return f"{STYLE_SYSTEM}\n\n{system}".strip() if system else STYLE_SYSTEM

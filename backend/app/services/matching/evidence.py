@@ -227,12 +227,22 @@ def _sanitize_evidence(parsed_evidence: list[dict], known_names: set[str]) -> li
     already passed. An entry whose cited source doesn't correspond to a real
     profile item is downgraded to NOT_FOUND on its own - it never drags every
     other (possibly perfectly legitimate) entry in the same batch down with
-    it, the way discarding the whole response and retrying would."""
+    it, the way discarding the whole response and retrying would.
+
+    Checks POSSIBLE as well as EXPLICIT/INFERRED: the structural validator
+    only requires a citation for EXPLICIT/INFERRED (POSSIBLE may legitimately
+    cite nothing - a vague/indirect signal with nothing specific to point to),
+    but if a POSSIBLE entry DOES cite something, that citation must be just
+    as real - otherwise a raw internal reference the model invented (observed
+    in practice: a bare "achievements/5") passes straight through unchecked
+    and downstream code (e.g. Custom CV evidence selection) sees a citation
+    that looks validated but isn't."""
     out = []
     for e in parsed_evidence:
         level = e.get("evidence_level")
         sources = e.get("sources") or []
-        if level in ("EXPLICIT", "INFERRED") and not any(_source_is_known(s, known_names) for s in sources):
+        needs_check = level in ("EXPLICIT", "INFERRED") or (level == "POSSIBLE" and sources)
+        if needs_check and not any(_source_is_known(s, known_names) for s in sources):
             out.append({
                 **e,
                 "evidence_level": "NOT_FOUND",
@@ -247,46 +257,64 @@ def _sanitize_evidence(parsed_evidence: list[dict], known_names: set[str]) -> li
     return out
 
 
+# A local 8B model classifies a handful of requirements against the profile
+# reliably in one call, but empirically degrades hard past that - defaulting
+# most or all of a large batch to NOT_FOUND even where obvious evidence
+# exists, or failing structural validation outright (see module docstring's
+# "same classify-with-AI-score-in-code lesson learned elsewhere in this
+# codebase for CV generation" - this is that same failure mode, here). Chunk
+# rather than trust one big call with every unresolved requirement at once.
+_MAX_REQUIREMENTS_PER_LLM_CALL = 6
+
+
 async def match_evidence_llm(provider, unresolved_names: list[str], profile: dict, compact_profile: dict) -> dict[str, dict]:
     """LLM-assisted pass for requirements the deterministic pass couldn't
     resolve - looks for paraphrased/indirect evidence (e.g. a CV bullet that
     describes SIEM-type work without using the word "SIEM"). Every EXPLICIT or
     INFERRED result is checked against the real profile item names after the
-    fact (see _sanitize_evidence) before being trusted."""
+    fact (see _sanitize_evidence) before being trusted.
+
+    Classifies in small batches (see _MAX_REQUIREMENTS_PER_LLM_CALL) rather
+    than one call for everything: a batch that fails validation stays
+    NOT_FOUND for just its own requirements, not every other requirement in
+    the report alongside it."""
     from ..prompt_service import fill_prompt
 
     if not unresolved_names:
         return {}
 
     known_names = _profile_item_names(profile)
-    prompt = fill_prompt(
-        "evidence_classification",
-        REQUIREMENTS=json.dumps(unresolved_names, indent=2),
-        PROFILE_SUMMARY=json.dumps(compact_profile, indent=2),
-    )
-    try:
-        parsed = await provider.generate_json(
-            prompt,
-            required_keys=["evidence"],
-            validate=_make_structure_validator(set(unresolved_names)),
-        )
-    except ValueError:
-        # Model couldn't produce a trustworthy classification after a retry -
-        # every unresolved requirement stays NOT_FOUND, which is the honest
-        # default (see module docstring), rather than raising and blocking the
-        # whole report over one unreliable batch.
-        return {}
-
-    sanitized = _sanitize_evidence(parsed.get("evidence", []), known_names)
-
     out: dict[str, dict] = {}
-    for e in sanitized:
-        out[e["requirement"]] = {
-            "evidence_level": e["evidence_level"],
-            "confidence": float(e.get("confidence") or 0.5),
-            "sources": e.get("sources") or [],
-            "rationale": e.get("rationale") or "",
-        }
+
+    for i in range(0, len(unresolved_names), _MAX_REQUIREMENTS_PER_LLM_CALL):
+        chunk = unresolved_names[i:i + _MAX_REQUIREMENTS_PER_LLM_CALL]
+        prompt = fill_prompt(
+            "evidence_classification",
+            REQUIREMENTS=json.dumps(chunk, indent=2),
+            PROFILE_SUMMARY=json.dumps(compact_profile, indent=2),
+        )
+        try:
+            parsed = await provider.generate_json(
+                prompt,
+                required_keys=["evidence"],
+                validate=_make_structure_validator(set(chunk)),
+            )
+        except ValueError:
+            # This chunk's classification couldn't be trusted even after a
+            # retry - its requirements stay NOT_FOUND (the honest default,
+            # see module docstring), but that no longer costs every other
+            # chunk its legitimate classification.
+            continue
+
+        sanitized = _sanitize_evidence(parsed.get("evidence", []), known_names)
+        for e in sanitized:
+            out[e["requirement"]] = {
+                "evidence_level": e["evidence_level"],
+                "confidence": float(e.get("confidence") or 0.5),
+                "sources": e.get("sources") or [],
+                "rationale": e.get("rationale") or "",
+            }
+
     return out
 
 
