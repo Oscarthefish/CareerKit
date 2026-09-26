@@ -38,6 +38,10 @@ jobs:
           npm start &
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
+          # curl's --retry does NOT retry on connection-refused by default
+          # (only on transient HTTP/timeout errors) - without
+          # --retry-connrefused it fails instantly, before "npm start" has
+          # even opened the port, regardless of --retry count.
           for route in / /profile /cv /applications /scanner /linkedin /examples /settings /setup; do
-            curl --fail --retry 10 --retry-delay 1 "http://127.0.0.1:3000$route" > /dev/null
+            curl --fail --retry-connrefused --retry 10 --retry-delay 1 "http://127.0.0.1:3000$route" > /dev/null
           done
