@@ -102,13 +102,30 @@ export const getStyle = () => request('/api/profile/style')
 export const updateStyle = (data: object) =>
   request('/api/profile/style', { method: 'PUT', body: JSON.stringify(data) })
 
+export const getTraining = () => request('/api/profile/training')
+export const createTraining = (data: object) =>
+  request('/api/profile/training', { method: 'POST', body: JSON.stringify(data) })
+export const updateTraining = (id: number, data: object) =>
+  request(`/api/profile/training/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const deleteTraining = (id: number) =>
+  request(`/api/profile/training/${id}`, { method: 'DELETE' })
+
+export const getCommunity = () => request('/api/profile/community')
+export const createCommunity = (data: object) =>
+  request('/api/profile/community', { method: 'POST', body: JSON.stringify(data) })
+export const updateCommunity = (id: number, data: object) =>
+  request(`/api/profile/community/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const deleteCommunity = (id: number) =>
+  request(`/api/profile/community/${id}`, { method: 'DELETE' })
+
 // CV
 export const getCurrentCV = () => request('/api/cv/current')
 export const getCVVersions = () => request('/api/cv/versions')
-export const generateCV = () => request('/api/cv/generate', { method: 'POST' })
+export const generateCV = (mode: string = 'cv_safe') => request(`/api/cv/generate?mode=${mode}`, { method: 'POST' })
 export const saveCV = (data: object) =>
   request('/api/cv/save', { method: 'POST', body: JSON.stringify(data) })
 export const brutalReview = () => request('/api/cv/review', { method: 'POST' })
+export const checkATSHealth = () => request('/api/cv/ats-check', { method: 'POST' })
 export const exportCV = (fmt: string) => `${API_BASE}/api/cv/export/${fmt}`
 
 // Examples
@@ -149,6 +166,13 @@ export const analyzeJob = (id: number) =>
   request(`/api/applications/${id}/analyze`, { method: 'POST' })
 export const generateScorecard = (id: number) =>
   request(`/api/applications/${id}/scorecard`, { method: 'POST' })
+export const generateJobMatch = (id: number) =>
+  request(`/api/applications/${id}/job-match`, { method: 'POST' })
+export const generateCustomCV = (id: number, selectedFixes: string[]) =>
+  request(`/api/applications/${id}/custom-cv`, { method: 'POST', body: JSON.stringify({ selected_fixes: selectedFixes }) })
+
+// Master CV Feedback Loop
+export const getSkillGaps = () => request('/api/insights/skill-gaps')
 export const generateCoverLetter = (id: number) =>
   request(`/api/applications/${id}/cover-letter`, { method: 'POST' })
 export const generateCVNotes = (id: number) =>
@@ -161,6 +185,20 @@ export const generateTailoredCV = (id: number) =>
   request(`/api/applications/${id}/tailored-cv`, { method: 'POST' })
 export const exportApplication = (id: number, fmt: string, section: string) =>
   `${API_BASE}/api/applications/${id}/export/${fmt}?section=${section}`
+
+// Reach Outs
+export const getReachOuts = () => request('/api/reachouts')
+export const getReachOut = (id: number) => request(`/api/reachouts/${id}`)
+export const createReachOut = (data: object) =>
+  request('/api/reachouts', { method: 'POST', body: JSON.stringify(data) })
+export const updateReachOut = (id: number, data: object) =>
+  request(`/api/reachouts/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const deleteReachOut = (id: number) =>
+  request(`/api/reachouts/${id}`, { method: 'DELETE' })
+export const generateReachOutLetter = (id: number) =>
+  request(`/api/reachouts/${id}/generate-letter`, { method: 'POST' })
+export const exportReachOut = (id: number, fmt: string, section: string) =>
+  `${API_BASE}/api/reachouts/${id}/export/${fmt}?section=${section}`
 
 // LinkedIn
 export const generateLinkedIn = () => request('/api/linkedin/generate', { method: 'POST' })

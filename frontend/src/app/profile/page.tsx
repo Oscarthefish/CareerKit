@@ -13,9 +13,46 @@ import {
   getProjects, createProject, updateProject, deleteProject,
   getEvidence, createEvidence, updateEvidence, deleteEvidence,
   getStyle, updateStyle,
+  getTraining, createTraining, updateTraining, deleteTraining,
+  getCommunity, createCommunity, updateCommunity, deleteCommunity,
 } from '@/lib/api'
 
-const TABS = ['Summary', 'Experience', 'Skills', 'Achievements', 'Certifications', 'Projects', 'Evidence', 'Style']
+const TABS = ['Summary', 'Experience', 'Skills', 'Training', 'Community', 'Achievements', 'Certifications', 'Projects', 'Evidence', 'Style']
+
+const CONFIDENCE_OPTIONS = [
+  { value: 'confirmed_hands_on', label: 'Confirmed hands-on' },
+  { value: 'working_knowledge', label: 'Working knowledge' },
+  { value: 'training_exposure', label: 'Training exposure' },
+  { value: 'familiarity', label: 'Familiarity' },
+  { value: 'interest', label: 'Interest / planned learning' },
+  { value: 'unverified', label: 'Unverified' },
+  { value: 'do_not_include', label: 'Do not include' },
+]
+
+const CONFIDENTIALITY_OPTIONS = [
+  { value: 'public', label: 'Public' },
+  { value: 'cv_safe', label: 'CV-safe' },
+  { value: 'recruiter_only', label: 'Recruiter-only' },
+  { value: 'interview_only', label: 'Interview-only' },
+  { value: 'confidential', label: 'Confidential' },
+  { value: 'do_not_use', label: 'Do not use' },
+]
+
+function ConfidenceSelect({ value, onChange }: { value: string; onChange: (e: any) => void }) {
+  return (
+    <select className="input" value={value} onChange={onChange}>
+      {CONFIDENCE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  )
+}
+
+function ConfidentialitySelect({ value, onChange }: { value: string; onChange: (e: any) => void }) {
+  return (
+    <select className="input" value={value} onChange={onChange}>
+      {CONFIDENTIALITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  )
+}
 
 export default function ProfilePage() {
   const [tab, setTab] = useState('Summary')
@@ -42,6 +79,8 @@ export default function ProfilePage() {
         {tab === 'Summary' && <SummaryTab />}
         {tab === 'Experience' && <ExperienceTab />}
         {tab === 'Skills' && <SkillsTab />}
+        {tab === 'Training' && <TrainingTab />}
+        {tab === 'Community' && <CommunityTab />}
         {tab === 'Achievements' && <AchievementsTab />}
         {tab === 'Certifications' && <CertificationsTab />}
         {tab === 'Projects' && <ProjectsTab />}
@@ -155,7 +194,7 @@ function ExperienceTab() {
   const [items, setItems] = useState<any[]>([])
   const [adding, setAdding] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
-  const blank = { company: '', role: '', start_date: '', end_date: '', is_current: false, location: '', description: '', key_responsibilities: [], technologies: [], order_index: 0 }
+  const blank = { company: '', employer_public_name: '', role: '', alternative_titles: [], start_date: '', end_date: '', is_current: false, location: '', description: '', key_responsibilities: [], technologies: [], order_index: 0, confidentiality_level: 'cv_safe' }
   const [form, setForm] = useState<any>(blank)
 
   const load = () => getWorkExperience().then((r: any) => setItems(r))
@@ -181,8 +220,15 @@ function ExperienceTab() {
         <div className="card p-5 space-y-3">
           <h3 className="font-semibold text-sm text-gray-900">{editId ? 'Edit Role' : 'Add Role'}</h3>
           <div className="form-row">
-            <div><label className="label">Company</label><input className="input" value={form.company} onChange={set('company')} /></div>
+            <div><label className="label">Company</label><input className="input" value={form.company} onChange={set('company')} placeholder="Use a clear [placeholder] if not yet confirmed" /></div>
             <div><label className="label">Role Title</label><input className="input" value={form.role} onChange={set('role')} /></div>
+          </div>
+          <div className="form-row">
+            <div><label className="label">Employer Public Name (optional)</label><input className="input" value={form.employer_public_name} onChange={set('employer_public_name')} placeholder="Redacted/generic name for public output" /></div>
+            <div>
+              <label className="label">Confidentiality</label>
+              <ConfidentialitySelect value={form.confidentiality_level || 'cv_safe'} onChange={(e) => setForm({ ...form, confidentiality_level: e.target.value })} />
+            </div>
           </div>
           <div className="form-row">
             <div><label className="label">Start Date</label><input className="input" value={form.start_date} onChange={set('start_date')} placeholder="Jan 2022" /></div>
@@ -194,6 +240,7 @@ function ExperienceTab() {
           </label>
           <div><label className="label">Location</label><input className="input" value={form.location} onChange={set('location')} /></div>
           <div><label className="label">Description</label><textarea className="textarea" rows={3} value={form.description} onChange={set('description')} /></div>
+          <TagInput value={form.alternative_titles} onChange={(v) => setForm({ ...form, alternative_titles: v })} label="Alternative Titles" placeholder="Add alternative title..." />
           <TagInput value={form.key_responsibilities} onChange={(v) => setForm({ ...form, key_responsibilities: v })} label="Key Responsibilities" placeholder="Add responsibility..." />
           <TagInput value={form.technologies} onChange={(v) => setForm({ ...form, technologies: v })} label="Technologies" placeholder="Add technology..." />
           <div className="flex gap-2">
@@ -236,7 +283,7 @@ function SkillsTab() {
   const [items, setItems] = useState<any[]>([])
   const [adding, setAdding] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
-  const blank = { name: '', category: 'technical', proficiency: 'proficient', years_experience: '', confidence: 'confirmed', notes: '' }
+  const blank = { name: '', aliases: [], category: 'technical', proficiency: 'proficient', years_experience: '', last_used: '', production_experience: true, confidence: 'confirmed_hands_on', notes: '' }
   const [form, setForm] = useState<any>(blank)
 
   const load = () => getSkills().then((r: any) => setItems(r))
@@ -292,15 +339,18 @@ function SkillsTab() {
             </div>
             <div>
               <label className="label">Confidence Level</label>
-              <select className="input" value={form.confidence} onChange={set('confidence')}>
-                <option value="confirmed">Confirmed</option>
-                <option value="inferred">Inferred</option>
-                <option value="weak">Weak</option>
-                <option value="do_not_use">Do Not Use</option>
-              </select>
+              <ConfidenceSelect value={form.confidence} onChange={set('confidence')} />
             </div>
           </div>
-          <div><label className="label">Years Experience</label><input className="input" type="number" step="0.5" value={form.years_experience} onChange={set('years_experience')} /></div>
+          <div className="form-row">
+            <div><label className="label">Years Experience</label><input className="input" type="number" step="0.5" value={form.years_experience} onChange={set('years_experience')} /></div>
+            <div><label className="label">Last Used</label><input className="input" value={form.last_used} onChange={set('last_used')} placeholder="2024" /></div>
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={form.production_experience} onChange={(e) => setForm({ ...form, production_experience: e.target.checked })} />
+            Production / hands-on experience (not just training)
+          </label>
+          <TagInput value={form.aliases} onChange={(v) => setForm({ ...form, aliases: v })} label="Aliases / legacy names" placeholder="e.g. Cisco Secure Endpoint" />
           <div><label className="label">Notes</label><input className="input" value={form.notes} onChange={set('notes')} /></div>
           <div className="flex gap-2">
             <button onClick={save} className="btn-primary btn-sm">Save</button>
@@ -340,7 +390,7 @@ function AchievementsTab() {
   const blank = {
     title: '', situation: '', action: '', result: '',
     tools_involved: [], skills_demonstrated: [], who_benefited: '',
-    measurable_outcome: '', confidence: 'confirmed', source: '', notes: '',
+    measurable_outcome: '', confidence: 'confirmed_hands_on', confidentiality_level: 'cv_safe', source: '', notes: '',
     bullet_plain: '', bullet_strong: '', bullet_senior: '', bullet_ats: '',
   }
   const [form, setForm] = useState<any>(blank)
@@ -399,12 +449,11 @@ function AchievementsTab() {
             <div><label className="label">Can it be measured?</label><input className="input" value={form.measurable_outcome} onChange={set('measurable_outcome')} placeholder="e.g. 40% reduction in false positives" /></div>
             <div>
               <label className="label">Confidence</label>
-              <select className="input" value={form.confidence} onChange={set('confidence')}>
-                <option value="confirmed">Confirmed</option>
-                <option value="inferred">Inferred</option>
-                <option value="weak">Weak</option>
-                <option value="do_not_use">Do Not Use</option>
-              </select>
+              <ConfidenceSelect value={form.confidence} onChange={set('confidence')} />
+            </div>
+            <div>
+              <label className="label">Confidentiality</label>
+              <ConfidentialitySelect value={form.confidentiality_level || 'cv_safe'} onChange={(e) => setForm({ ...form, confidentiality_level: e.target.value })} />
             </div>
           </div>
 
@@ -479,7 +528,7 @@ function CertificationsTab() {
   const [items, setItems] = useState<any[]>([])
   const [adding, setAdding] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
-  const blank = { name: '', issuer: '', date_obtained: '', expiry_date: '', credential_id: '', url: '', in_progress: false }
+  const blank = { name: '', issuer: '', date_obtained: '', expiry_date: '', credential_id: '', url: '', in_progress: false, status: 'active', notes: '' }
   const [form, setForm] = useState<any>(blank)
 
   const load = () => getCertifications().then((r: any) => setItems(r))
@@ -515,10 +564,22 @@ function CertificationsTab() {
             <div><label className="label">Credential ID</label><input className="input" value={form.credential_id} onChange={set('credential_id')} /></div>
             <div><label className="label">URL</label><input className="input" value={form.url} onChange={set('url')} /></div>
           </div>
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input type="checkbox" checked={form.in_progress} onChange={(e) => setForm({ ...form, in_progress: e.target.checked })} />
-            In progress
-          </label>
+          <div className="form-row">
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" checked={form.in_progress} onChange={(e) => setForm({ ...form, in_progress: e.target.checked })} />
+              In progress
+            </label>
+            <div>
+              <label className="label">Status</label>
+              <select className="input" value={form.status} onChange={set('status')}>
+                <option value="active">Active</option>
+                <option value="expired">Expired</option>
+                <option value="retired_legacy">Retired / legacy accreditation</option>
+                <option value="unverified_status">Unverified status</option>
+              </select>
+            </div>
+          </div>
+          <div><label className="label">Notes</label><input className="input" value={form.notes} onChange={set('notes')} placeholder="e.g. do not describe as PCNSE" /></div>
           <div className="flex gap-2">
             <button onClick={save} className="btn-primary btn-sm">Save</button>
             <button onClick={() => { setAdding(false); setEditId(null) }} className="btn-ghost btn-sm">Cancel</button>
@@ -532,6 +593,7 @@ function CertificationsTab() {
             <div className="flex items-center gap-2">
               <p className="font-semibold text-sm text-gray-900">{item.name}</p>
               {item.in_progress && <span className="badge-yellow">In Progress</span>}
+              {item.status === 'retired_legacy' && <span className="badge-gray">Legacy</span>}
             </div>
             <p className="text-xs text-gray-400 mt-0.5">
               {item.issuer} {item.date_obtained ? `· ${item.date_obtained}` : ''} {item.expiry_date ? `· Expires ${item.expiry_date}` : ''}
@@ -683,6 +745,204 @@ function EvidenceTab() {
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+function TrainingTab() {
+  const [items, setItems] = useState<any[]>([])
+  const [adding, setAdding] = useState(false)
+  const [editId, setEditId] = useState<number | null>(null)
+  const blank = {
+    title: '', provider: '', date: '', delivery_type: 'classroom', duration: '',
+    completion_status: 'completed', related_certification: '', tools: [], skills: [],
+    evidence: '', include_by_default: true, confidence: 'confirmed_hands_on', notes: '',
+  }
+  const [form, setForm] = useState<any>(blank)
+
+  const load = () => getTraining().then((r: any) => setItems(r))
+  useEffect(() => { load() }, [])
+
+  const set = (k: string) => (e: any) => setForm({ ...form, [k]: e.target.value })
+
+  const save = async () => {
+    if (editId) { await updateTraining(editId, form) } else { await createTraining(form) }
+    setAdding(false); setEditId(null); setForm(blank); load()
+  }
+
+  const startEdit = (item: any) => { setForm(item); setEditId(item.id); setAdding(true) }
+  const remove = async (id: number) => { if (confirm('Remove?')) { await deleteTraining(id); load() } }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-gray-500">
+        Training and courses, kept separate from certifications so a course is never presented as a passed exam.
+      </p>
+      <div className="flex justify-end">
+        <button onClick={() => { setForm(blank); setEditId(null); setAdding(true) }} className="btn-primary btn-sm">+ Add Training</button>
+      </div>
+
+      {adding && (
+        <div className="card p-5 space-y-3">
+          <div className="form-row">
+            <div><label className="label">Title</label><input className="input" value={form.title} onChange={set('title')} /></div>
+            <div><label className="label">Provider</label><input className="input" value={form.provider} onChange={set('provider')} /></div>
+          </div>
+          <div className="form-row">
+            <div><label className="label">Date</label><input className="input" value={form.date} onChange={set('date')} placeholder="2017 or 18 March 2026" /></div>
+            <div><label className="label">Duration</label><input className="input" value={form.duration} onChange={set('duration')} placeholder="Six-day classroom course" /></div>
+          </div>
+          <div className="form-row">
+            <div>
+              <label className="label">Delivery Type</label>
+              <select className="input" value={form.delivery_type} onChange={set('delivery_type')}>
+                <option value="classroom">Classroom</option>
+                <option value="online">Online</option>
+                <option value="self-paced">Self-paced</option>
+                <option value="conference-workshop">Conference workshop</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Completion Status</label>
+              <select className="input" value={form.completion_status} onChange={set('completion_status')}>
+                <option value="completed">Completed</option>
+                <option value="enrolled">Enrolled</option>
+                <option value="in_progress">In progress</option>
+                <option value="purchased_not_started">Purchased, not started</option>
+                <option value="unconfirmed">Unconfirmed</option>
+              </select>
+            </div>
+          </div>
+          <div><label className="label">Related Certification (if any)</label><input className="input" value={form.related_certification} onChange={set('related_certification')} placeholder="Leave blank if this training did not lead to a certification" /></div>
+          <TagInput value={form.tools} onChange={(v) => setForm({ ...form, tools: v })} label="Tools Covered" placeholder="Add tool..." />
+          <TagInput value={form.skills} onChange={(v) => setForm({ ...form, skills: v })} label="Skills Covered" placeholder="Add skill..." />
+          <div className="form-row">
+            <div>
+              <label className="label">Confidence</label>
+              <ConfidenceSelect value={form.confidence} onChange={set('confidence')} />
+            </div>
+            <div><label className="label">Evidence</label><input className="input" value={form.evidence} onChange={set('evidence')} placeholder="Certificate, receipt, portal record..." /></div>
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={form.include_by_default} onChange={(e) => setForm({ ...form, include_by_default: e.target.checked })} />
+            Include by default on generated CVs
+          </label>
+          <div><label className="label">Notes</label><input className="input" value={form.notes} onChange={set('notes')} /></div>
+          <div className="flex gap-2">
+            <button onClick={save} className="btn-primary btn-sm">Save</button>
+            <button onClick={() => { setAdding(false); setEditId(null) }} className="btn-ghost btn-sm">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {items.map((item) => (
+        <div key={item.id} className="card p-4">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <p className="font-semibold text-sm text-gray-900">{item.title}</p>
+                <ConfidenceBadge level={item.confidence} />
+                {item.completion_status !== 'completed' && <span className="badge-yellow">{item.completion_status.replace(/_/g, ' ')}</span>}
+              </div>
+              <p className="text-xs text-gray-400 mt-0.5">{item.provider} {item.date ? `· ${item.date}` : ''}</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => startEdit(item)} className="btn-ghost btn-sm">Edit</button>
+              <button onClick={() => remove(item.id)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
+            </div>
+          </div>
+        </div>
+      ))}
+      {items.length === 0 && !adding && (
+        <div className="text-sm text-gray-400 text-center py-8">No training added yet.</div>
+      )}
+    </div>
+  )
+}
+
+function CommunityTab() {
+  const [items, setItems] = useState<any[]>([])
+  const [adding, setAdding] = useState(false)
+  const [editId, setEditId] = useState<number | null>(null)
+  const blank = {
+    event: '', location: '', date: '', participation_type: 'attendee',
+    notes: '', evidence: '', include_on_cv: false, include_on_linkedin: true,
+  }
+  const [form, setForm] = useState<any>(blank)
+
+  const load = () => getCommunity().then((r: any) => setItems(r))
+  useEffect(() => { load() }, [])
+
+  const set = (k: string) => (e: any) => setForm({ ...form, [k]: e.target.value })
+
+  const save = async () => {
+    if (editId) { await updateCommunity(editId, form) } else { await createCommunity(form) }
+    setAdding(false); setEditId(null); setForm(blank); load()
+  }
+
+  const startEdit = (item: any) => { setForm(item); setEditId(item.id); setAdding(true) }
+  const remove = async (id: number) => { if (confirm('Remove?')) { await deleteCommunity(id); load() } }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-gray-500">Conferences, meetups and community involvement. Treated as professional engagement, not formal qualifications.</p>
+      <div className="flex justify-end">
+        <button onClick={() => { setForm(blank); setEditId(null); setAdding(true) }} className="btn-primary btn-sm">+ Add Event</button>
+      </div>
+
+      {adding && (
+        <div className="card p-5 space-y-3">
+          <div className="form-row">
+            <div><label className="label">Event</label><input className="input" value={form.event} onChange={set('event')} /></div>
+            <div><label className="label">Location</label><input className="input" value={form.location} onChange={set('location')} /></div>
+          </div>
+          <div className="form-row">
+            <div><label className="label">Date</label><input className="input" value={form.date} onChange={set('date')} placeholder="2020 or 29 October 2020" /></div>
+            <div>
+              <label className="label">Participation Type</label>
+              <select className="input" value={form.participation_type} onChange={set('participation_type')}>
+                <option value="attendee">Attendee</option>
+                <option value="regular_attendee">Regular attendee</option>
+                <option value="participant">Participant</option>
+                <option value="speaker">Speaker</option>
+                <option value="organiser">Organiser</option>
+              </select>
+            </div>
+          </div>
+          <div><label className="label">Notes</label><input className="input" value={form.notes} onChange={set('notes')} /></div>
+          <div><label className="label">Evidence</label><input className="input" value={form.evidence} onChange={set('evidence')} placeholder="Ticket, badge, confirmation email..." /></div>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" checked={form.include_on_cv} onChange={(e) => setForm({ ...form, include_on_cv: e.target.checked })} />
+              Include on CV
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" checked={form.include_on_linkedin} onChange={(e) => setForm({ ...form, include_on_linkedin: e.target.checked })} />
+              Include on LinkedIn
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={save} className="btn-primary btn-sm">Save</button>
+            <button onClick={() => { setAdding(false); setEditId(null) }} className="btn-ghost btn-sm">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {items.map((item) => (
+        <div key={item.id} className="card p-4 flex items-center justify-between">
+          <div>
+            <p className="font-semibold text-sm text-gray-900">{item.event}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{item.location} {item.date ? `· ${item.date}` : ''} · {item.participation_type.replace(/_/g, ' ')}</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => startEdit(item)} className="btn-ghost btn-sm">Edit</button>
+            <button onClick={() => remove(item.id)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
+          </div>
+        </div>
+      ))}
+      {items.length === 0 && !adding && (
+        <div className="text-sm text-gray-400 text-center py-8">No community involvement added yet.</div>
+      )}
     </div>
   )
 }

@@ -32,6 +32,12 @@ def persist_application_files(db: Session, app_id: int) -> None:
         save_application_file(folder, "03-match-scorecard.md", md)
         save_application_json(folder, "match-scorecard.json", scorecard)
 
+    if app.job_match_result:
+        job_match = json.loads(app.job_match_result)
+        md = _dict_to_md("Job Match Report", job_match)
+        save_application_file(folder, "03b-job-match-report.md", md)
+        save_application_json(folder, "job-match-report.json", job_match)
+
     if app.cover_letter:
         save_application_file(folder, "04-tailored-cover-letter.md", app.cover_letter)
 
@@ -40,6 +46,9 @@ def persist_application_files(db: Session, app_id: int) -> None:
 
     if app.tailored_cv:
         save_application_file(folder, "05b-tailored-cv.md", app.tailored_cv)
+
+    if app.custom_cv:
+        save_application_file(folder, "05c-custom-cv.md", app.custom_cv)
 
     if app.linkedin_angle:
         save_application_file(folder, "06-linkedin-angle.md", app.linkedin_angle)

@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..models.profile import (
     Profile, WorkExperience, Skill, Certification,
-    Achievement, Project, EvidenceItem, StylePreferences
+    Achievement, Project, EvidenceItem, StylePreferences,
+    Training, CommunityInvolvement
 )
 from ..services.profile_service import get_or_create_profile, get_or_create_style, get_banned_phrases_instruction
 from ..ai.provider_factory import get_provider
@@ -59,7 +60,9 @@ def update_profile(body: ProfileUpdate, db: Session = Depends(get_db)):
 
 class WorkExpCreate(BaseModel):
     company: str
+    employer_public_name: Optional[str] = None
     role: str
+    alternative_titles: List[str] = []
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     is_current: bool = False
@@ -68,6 +71,7 @@ class WorkExpCreate(BaseModel):
     key_responsibilities: List[str] = []
     technologies: List[str] = []
     order_index: int = 0
+    confidentiality_level: str = "cv_safe"
 
 
 @router.get("/work-experience")
@@ -113,7 +117,9 @@ def _serialize_work_exp(row: WorkExperience) -> dict:
     return {
         "id": row.id,
         "company": row.company,
+        "employer_public_name": row.employer_public_name,
         "role": row.role,
+        "alternative_titles": json.loads(row.alternative_titles or "[]"),
         "start_date": row.start_date,
         "end_date": row.end_date,
         "is_current": row.is_current,
@@ -122,6 +128,7 @@ def _serialize_work_exp(row: WorkExperience) -> dict:
         "key_responsibilities": json.loads(row.key_responsibilities or "[]"),
         "technologies": json.loads(row.technologies or "[]"),
         "order_index": row.order_index,
+        "confidentiality_level": row.confidentiality_level,
     }
 
 
@@ -129,28 +136,35 @@ def _serialize_work_exp(row: WorkExperience) -> dict:
 
 class SkillCreate(BaseModel):
     name: str
+    aliases: List[str] = []
     category: Optional[str] = None
     proficiency: Optional[str] = None
     years_experience: Optional[float] = None
-    confidence: str = "confirmed"
+    last_used: Optional[str] = None
+    production_experience: bool = True
+    confidence: str = "confirmed_hands_on"
     notes: Optional[str] = None
+
+
+def _serialize_skill(row: Skill) -> dict:
+    return {
+        **{c.name: getattr(row, c.name) for c in Skill.__table__.columns if c.name != "aliases"},
+        "aliases": json.loads(row.aliases or "[]"),
+    }
 
 
 @router.get("/skills")
 def list_skills(db: Session = Depends(get_db)):
-    return [
-        {c.name: getattr(s, c.name) for c in Skill.__table__.columns}
-        for s in db.query(Skill).all()
-    ]
+    return [_serialize_skill(s) for s in db.query(Skill).all()]
 
 
 @router.post("/skills")
 def create_skill(body: SkillCreate, db: Session = Depends(get_db)):
-    row = Skill(**body.model_dump())
+    row = Skill(**{k: (json.dumps(v) if isinstance(v, list) else v) for k, v in body.model_dump().items()})
     db.add(row)
     db.commit()
     db.refresh(row)
-    return {c.name: getattr(row, c.name) for c in Skill.__table__.columns}
+    return _serialize_skill(row)
 
 
 @router.put("/skills/{item_id}")
@@ -159,10 +173,10 @@ def update_skill(item_id: int, body: SkillCreate, db: Session = Depends(get_db))
     if not row:
         raise HTTPException(status_code=404, detail="Not found")
     for k, v in body.model_dump().items():
-        setattr(row, k, v)
+        setattr(row, k, json.dumps(v) if isinstance(v, list) else v)
     db.commit()
     db.refresh(row)
-    return {c.name: getattr(row, c.name) for c in Skill.__table__.columns}
+    return _serialize_skill(row)
 
 
 @router.delete("/skills/{item_id}")
@@ -185,6 +199,8 @@ class CertCreate(BaseModel):
     credential_id: Optional[str] = None
     url: Optional[str] = None
     in_progress: bool = False
+    status: str = "active"
+    notes: Optional[str] = None
 
 
 @router.get("/certifications")
@@ -237,7 +253,8 @@ class AchievementCreate(BaseModel):
     skills_demonstrated: List[str] = []
     who_benefited: Optional[str] = None
     measurable_outcome: Optional[str] = None
-    confidence: str = "confirmed"
+    confidence: str = "confirmed_hands_on"
+    confidentiality_level: str = "cv_safe"
     source: Optional[str] = None
     notes: Optional[str] = None
 
@@ -322,6 +339,7 @@ def _serialize_achievement(row: Achievement) -> dict:
         "who_benefited": row.who_benefited,
         "measurable_outcome": row.measurable_outcome,
         "confidence": row.confidence,
+        "confidentiality_level": row.confidentiality_level,
         "bullet_plain": row.bullet_plain,
         "bullet_strong": row.bullet_strong,
         "bullet_senior": row.bullet_senior,
@@ -341,7 +359,8 @@ class ProjectCreate(BaseModel):
     outcomes: Optional[str] = None
     url: Optional[str] = None
     date_range: Optional[str] = None
-    confidence: str = "confirmed"
+    confidence: str = "confirmed_hands_on"
+    confidentiality_level: str = "cv_safe"
 
 
 @router.get("/projects")
@@ -396,7 +415,8 @@ class EvidenceCreate(BaseModel):
     skills_demonstrated: List[str] = []
     outcome: Optional[str] = None
     value: Optional[str] = None
-    confidence: str = "confirmed"
+    confidence: str = "confirmed_hands_on"
+    confidentiality_level: str = "cv_safe"
     notes: Optional[str] = None
     source: Optional[str] = None
 
@@ -448,9 +468,136 @@ def _serialize_evidence(row: EvidenceItem) -> dict:
         "outcome": row.outcome,
         "value": row.value,
         "confidence": row.confidence,
+        "confidentiality_level": row.confidentiality_level,
         "notes": row.notes,
         "source": row.source,
     }
+
+
+# ---------- Training ----------
+
+class TrainingCreate(BaseModel):
+    title: str
+    provider: Optional[str] = None
+    date: Optional[str] = None
+    delivery_type: Optional[str] = None
+    duration: Optional[str] = None
+    completion_status: str = "completed"
+    related_certification: Optional[str] = None
+    tools: List[str] = []
+    skills: List[str] = []
+    evidence: Optional[str] = None
+    include_by_default: bool = True
+    confidence: str = "confirmed_hands_on"
+    notes: Optional[str] = None
+
+
+def _serialize_training(row: Training) -> dict:
+    return {
+        "id": row.id,
+        "title": row.title,
+        "provider": row.provider,
+        "date": row.date,
+        "delivery_type": row.delivery_type,
+        "duration": row.duration,
+        "completion_status": row.completion_status,
+        "related_certification": row.related_certification,
+        "tools": json.loads(row.tools or "[]"),
+        "skills": json.loads(row.skills or "[]"),
+        "evidence": row.evidence,
+        "include_by_default": row.include_by_default,
+        "confidence": row.confidence,
+        "notes": row.notes,
+    }
+
+
+@router.get("/training")
+def list_training(db: Session = Depends(get_db)):
+    return [_serialize_training(r) for r in db.query(Training).all()]
+
+
+@router.post("/training")
+def create_training(body: TrainingCreate, db: Session = Depends(get_db)):
+    row = Training(**{k: (json.dumps(v) if isinstance(v, list) else v) for k, v in body.model_dump().items()})
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _serialize_training(row)
+
+
+@router.put("/training/{item_id}")
+def update_training(item_id: int, body: TrainingCreate, db: Session = Depends(get_db)):
+    row = db.query(Training).filter(Training.id == item_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    for k, v in body.model_dump().items():
+        setattr(row, k, json.dumps(v) if isinstance(v, list) else v)
+    db.commit()
+    db.refresh(row)
+    return _serialize_training(row)
+
+
+@router.delete("/training/{item_id}")
+def delete_training(item_id: int, db: Session = Depends(get_db)):
+    row = db.query(Training).filter(Training.id == item_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------- Community Involvement ----------
+
+class CommunityCreate(BaseModel):
+    event: str
+    location: Optional[str] = None
+    date: Optional[str] = None
+    participation_type: str = "attendee"
+    notes: Optional[str] = None
+    evidence: Optional[str] = None
+    include_on_cv: bool = False
+    include_on_linkedin: bool = True
+
+
+def _serialize_community(row: CommunityInvolvement) -> dict:
+    return {c.name: getattr(row, c.name) for c in CommunityInvolvement.__table__.columns}
+
+
+@router.get("/community")
+def list_community(db: Session = Depends(get_db)):
+    return [_serialize_community(r) for r in db.query(CommunityInvolvement).all()]
+
+
+@router.post("/community")
+def create_community(body: CommunityCreate, db: Session = Depends(get_db)):
+    row = CommunityInvolvement(**body.model_dump())
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _serialize_community(row)
+
+
+@router.put("/community/{item_id}")
+def update_community(item_id: int, body: CommunityCreate, db: Session = Depends(get_db)):
+    row = db.query(CommunityInvolvement).filter(CommunityInvolvement.id == item_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    for k, v in body.model_dump().items():
+        setattr(row, k, v)
+    db.commit()
+    db.refresh(row)
+    return _serialize_community(row)
+
+
+@router.delete("/community/{item_id}")
+def delete_community(item_id: int, db: Session = Depends(get_db)):
+    row = db.query(CommunityInvolvement).filter(CommunityInvolvement.id == item_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
 
 
 # ---------- Style Preferences ----------

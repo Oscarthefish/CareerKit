@@ -8,16 +8,39 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..models.job import JobApplication
-from ..services.profile_service import build_profile_summary, get_banned_phrases_instruction
+from ..services.profile_service import (
+    build_profile_summary,
+    compact_profile_for_prompt,
+    former_employer_names,
+    get_banned_phrases_instruction,
+    get_banned_phrases_list,
+    in_progress_cert_names,
+)
 from ..services.prompt_service import fill_prompt
 from ..services.application_service import persist_application_files
 from ..ai.provider_factory import get_provider
+from ..ai.language import to_british
 from ..parsers.router import extract_text, SUPPORTED_EXTENSIONS
 from ..exporters import markdown_exporter, docx_exporter, pdf_exporter
 from ..storage.file_storage import get_application_folder
 
 router = APIRouter(prefix="/api/applications", tags=["applications"])
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+_UNKNOWN_COMPANY_VALUES = {"unknown", "n/a", "na", "tbc", "tbd", "none", ""}
+
+
+def _company_display(app: JobApplication) -> str:
+    """The company field sometimes literally holds a placeholder like "Unknown"
+    (e.g. from a scraped job listing with no employer named). Treating that as
+    a real company name feeds it straight into prompts, and a model asked to
+    write about "Unknown" will invent a plausible-sounding substitute (a vague
+    location descriptor, etc.) rather than doing the sensible thing and just
+    not naming a company at all."""
+    company = (app.company or "").strip()
+    if company.lower() in _UNKNOWN_COMPANY_VALUES:
+        return "the company"
+    return company
 
 
 def _serialize(app: JobApplication) -> dict:
@@ -35,9 +58,12 @@ def _serialize(app: JobApplication) -> dict:
         "job_description_raw": app.job_description_raw,
         "job_analysis": json.loads(app.job_analysis) if app.job_analysis else None,
         "match_scorecard": json.loads(app.match_scorecard) if app.match_scorecard else None,
+        "job_match_result": json.loads(app.job_match_result) if app.job_match_result else None,
         "cover_letter": app.cover_letter,
         "cv_adjustment_notes": app.cv_adjustment_notes,
         "tailored_cv": app.tailored_cv,
+        "custom_cv": app.custom_cv,
+        "custom_cv_fixes_applied": json.loads(app.custom_cv_fixes_applied) if app.custom_cv_fixes_applied else None,
         "interview_prep": json.loads(app.interview_prep) if app.interview_prep else None,
         "linkedin_angle": app.linkedin_angle,
         "recruiter_message": app.recruiter_message,
@@ -63,6 +89,8 @@ def list_applications(db: Session = Depends(get_db)):
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "has_analysis": r.job_analysis is not None,
             "has_scorecard": r.match_scorecard is not None,
+            "has_job_match": r.job_match_result is not None,
+            "has_custom_cv": r.custom_cv is not None,
             "has_cover_letter": r.cover_letter is not None,
             "has_interview_prep": r.interview_prep is not None,
         }
@@ -115,6 +143,7 @@ class ApplicationUpdate(BaseModel):
     session_notes: Optional[str] = None
     cover_letter: Optional[str] = None
     cv_adjustment_notes: Optional[str] = None
+    tailored_cv: Optional[str] = None
     linkedin_angle: Optional[str] = None
     recruiter_message: Optional[str] = None
 
@@ -214,18 +243,240 @@ async def generate_scorecard(app_id: int, db: Session = Depends(get_db)):
     if not app.job_analysis:
         raise HTTPException(status_code=400, detail="Run job analysis first.")
 
-    profile = build_profile_summary(db)
+    # Full mode: an honest internal self-assessment can draw on the whole record,
+    # including recruiter/interview-only context, since this never leaves the app.
+    profile = build_profile_summary(db, mode="full")
     prompt = fill_prompt(
         "match_scorecard",
         PROFILE_SUMMARY=json.dumps(profile, indent=2),
         JOB_ANALYSIS=app.job_analysis,
     )
     provider = get_provider()
-    scorecard = await provider.generate_json(prompt)
+    try:
+        scorecard = await provider.generate_json(
+            prompt,
+            required_keys=["overall_fit", "strong_matches", "genuine_gaps", "do_not_claim"],
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"The local model returned an unusable response ({e}). Try regenerating, "
+                   "or pick a larger model in Settings.",
+        )
     app.match_scorecard = json.dumps(scorecard)
     db.commit()
     persist_application_files(db, app_id)
     return {"scorecard": scorecard}
+
+
+@router.post("/{app_id}/job-match")
+async def generate_job_match(app_id: int, db: Session = Depends(get_db)):
+    """Explainable Job Match report: structured JD requirements, evidence
+    matched deterministically-first against the candidate's Master CV, a
+    deterministic score computed from that evidence, and recommendations
+    gated by the Recommendation Safety Model. See services/matching/."""
+    from ..models.analysis import AnalysisSnapshot
+    from ..models.cv import CVVersion
+    from ..services.ats.checks import run_ats_check
+    from ..services.recruiter.scoring import get_or_compute_recruiter_readiness
+    from ..services.matching.evidence import match_evidence
+    from ..services.matching.recommendations import build_priority_fixes
+    from ..services.matching.requirements import bucket_by_importance, extract_requirements
+    from ..services.matching.scoring import compute_job_match, hard_skills_table, keyword_coverage, requirement_coverage_rows
+    from ..services.matching.title_match import match_title
+
+    app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not app.job_analysis:
+        raise HTTPException(status_code=400, detail="Run job analysis first.")
+
+    provider = get_provider()
+    analysis = json.loads(app.job_analysis)
+
+    # Requirement extraction is cached on the application: re-analysing a JD
+    # you've already broken down costs an LLM call for no benefit.
+    try:
+        if app.job_requirements:
+            requirements = json.loads(app.job_requirements)
+        else:
+            requirements = await extract_requirements(provider, analysis, app.job_description_raw or "")
+            app.job_requirements = json.dumps(requirements)
+
+        profile = build_profile_summary(db, mode="full")
+        compact = compact_profile_for_prompt(profile)
+
+        requirements_with_evidence = await match_evidence(provider, requirements, profile, compact)
+
+        job_title = analysis.get("job_title") or app.role or ""
+        title_match = await match_title(provider, job_title, profile)
+        title_match["job_title"] = job_title
+    except ValueError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"The local model returned an unusable response ({e}). Try again, "
+                   "or pick a larger model in Settings.",
+        )
+
+    job_match = compute_job_match(requirements_with_evidence, title_match)
+    master = db.query(CVVersion).order_by(CVVersion.id.desc()).first()
+    # Deterministic, no LLM call - cheap enough to compute every time rather
+    # than cache, so it's always current with the latest Master CV.
+    ats_check = run_ats_check(master.content_markdown) if master and master.content_markdown else None
+
+    # Recruiter Readiness is a property of the CV, not of this job, so it's
+    # cached on the CV version (force=False) rather than re-run on every
+    # Job Match generation.
+    recruiter_review = await get_or_compute_recruiter_readiness(provider, db, master, force=False) if master else None
+    recruiter_readiness = recruiter_review["readiness"] if recruiter_review else None
+
+    result = {
+        "job_match": job_match,
+        "title_match": title_match,
+        "ats_check": ats_check,
+        "recruiter_readiness": recruiter_readiness,
+        "requirement_coverage": requirement_coverage_rows(requirements_with_evidence),
+        "hard_skills": hard_skills_table(requirements_with_evidence),
+        "keyword_coverage": keyword_coverage(requirements_with_evidence),
+        "priority_fixes": build_priority_fixes(requirements_with_evidence, title_match),
+        "requirements_by_importance": {
+            level: [r["name"] for r in reqs] for level, reqs in bucket_by_importance(requirements).items()
+        },
+    }
+    app.job_match_result = json.dumps(result)
+    db.commit()
+
+    db.add(AnalysisSnapshot(
+        application_id=app.id,
+        cv_version_id=master.id if master else None,
+        job_match_score=job_match["overall"],
+        label="master_cv",
+        summary_json=json.dumps(result),
+    ))
+    db.commit()
+
+    persist_application_files(db, app_id)
+    return {"job_match_result": result}
+
+
+class CustomCVRequest(BaseModel):
+    selected_fixes: list[str] = []
+
+
+@router.post("/{app_id}/custom-cv")
+async def generate_custom_cv(app_id: int, body: CustomCVRequest, db: Session = Depends(get_db)):
+    """Custom CV Creation + Rescan: applies ONLY the SAFE_OPTIMISATION fixes
+    the user selected from the Job Match report, never anything else, then
+    re-scans the result so the improvement is measurable rather than asserted.
+
+    Job Match is deliberately NOT recomputed here: it measures evidence
+    against the candidate's structured Master CV data, which a wording-only
+    CV edit cannot change (see custom_cv.md) - re-running it would just
+    reproduce the same number at the cost of two more LLM calls. ATS
+    Compatibility and Recruiter Readiness are text-driven and genuinely can
+    (and should) move, so those are rescanned for real."""
+    from ..models.analysis import AnalysisSnapshot
+    from ..models.cv import CVVersion
+    from ..services.ats.checks import run_ats_check
+    from ..services.matching.recommendations import select_safe_fixes
+    from ..services.recruiter.scoring import _validate_review, compute_recruiter_readiness
+
+    app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not app.job_match_result:
+        raise HTTPException(status_code=400, detail="Generate a Job Match report first.")
+
+    master = db.query(CVVersion).order_by(CVVersion.id.desc()).first()
+    if not master or not master.content_markdown:
+        raise HTTPException(status_code=400, detail="No master CV found. Generate your master CV first.")
+
+    job_match_result = json.loads(app.job_match_result)
+    approved = select_safe_fixes(job_match_result, body.selected_fixes)
+    if not approved:
+        raise HTTPException(
+            status_code=400,
+            detail="None of the selected changes are supported by evidence in your Master CV. "
+                   "Only changes tagged 'Safe optimisation' can be applied.",
+        )
+
+    profile = build_profile_summary(db)
+    banned = get_banned_phrases_instruction(db)
+    prompt = fill_prompt(
+        "custom_cv",
+        MASTER_CV=master.content_markdown,
+        APPROVED_CHANGES=json.dumps(
+            [{"requirement": f["requirement"], "change": f["message"]} for f in approved], indent=2
+        ),
+        ROLE_TITLE=app.role or "the role",
+        COMPANY_NAME=_company_display(app),
+        BANNED_PHRASES=banned,
+    )
+    provider = get_provider()
+    try:
+        custom_cv = to_british(await provider.generate(
+            prompt,
+            banned_phrases=get_banned_phrases_list(db),
+            flag_years_experience=True,
+            in_progress_certs=in_progress_cert_names(profile),
+            former_employers=former_employer_names(profile),
+        ))
+    except ValueError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"The local model returned an unusable response ({e}). Try again, "
+                   "or pick a larger model in Settings.",
+        )
+
+    applied_names = [f["requirement"] for f in approved]
+    app.custom_cv = custom_cv
+    app.custom_cv_fixes_applied = json.dumps(applied_names)
+    db.commit()
+
+    ats_after = run_ats_check(custom_cv)
+    try:
+        review = await provider.generate_json(
+            fill_prompt("brutal_review", CV_CONTENT=custom_cv),
+            required_keys=["overall_verdict", "priority_fixes"],
+            validate=_validate_review,
+        )
+        recruiter_after = compute_recruiter_readiness(review, custom_cv)
+    except ValueError:
+        recruiter_after = None
+
+    def _score_of(key: str) -> Optional[int]:
+        section = job_match_result.get(key)
+        return section.get("score") if section else None
+
+    before = {
+        "job_match": job_match_result["job_match"]["overall"],
+        "ats_check": _score_of("ats_check"),
+        "recruiter_readiness": _score_of("recruiter_readiness"),
+    }
+    after = {
+        "job_match": job_match_result["job_match"]["overall"],
+        "ats_check": ats_after["score"],
+        "recruiter_readiness": recruiter_after["score"] if recruiter_after else None,
+    }
+
+    db.add(AnalysisSnapshot(
+        application_id=app.id,
+        cv_version_id=None,  # a custom CV is a per-application rendering, not a new Master CV version
+        job_match_score=after["job_match"],
+        label="custom_cv",
+        summary_json=json.dumps({"before": before, "after": after, "ats_check": ats_after, "recruiter_readiness": recruiter_after}),
+    ))
+    db.commit()
+
+    persist_application_files(db, app_id)
+    return {
+        "custom_cv": custom_cv,
+        "applied_fixes": applied_names,
+        "before": before,
+        "after": after,
+        "ats_check": ats_after,
+        "recruiter_readiness": recruiter_after,
+    }
 
 
 @router.post("/{app_id}/cover-letter")
@@ -244,12 +495,18 @@ async def generate_cover_letter(app_id: int, db: Session = Depends(get_db)):
         JOB_ANALYSIS=app.job_analysis,
         MATCH_SCORECARD=app.match_scorecard or "{}",
         RECRUITER_NAME=app.recruiter_name or "Hiring Manager",
-        COMPANY_NAME=app.company or "the company",
+        COMPANY_NAME=_company_display(app),
         ROLE_TITLE=app.role or "the role",
         BANNED_PHRASES=banned,
     )
     provider = get_provider()
-    letter = await provider.generate(prompt)
+    letter = to_british(await provider.generate(
+        prompt,
+        banned_phrases=get_banned_phrases_list(db),
+        flag_years_experience=True,
+        in_progress_certs=in_progress_cert_names(profile),
+        former_employers=former_employer_names(profile),
+    ))
     app.cover_letter = letter
     db.commit()
     persist_application_files(db, app_id)
@@ -275,6 +532,8 @@ async def generate_cv_notes(app_id: int, db: Session = Depends(get_db)):
 
     prompt = f"""You are a CV advisor helping a New Zealand cyber security professional tailor their CV for a specific role.
 
+Write everything in British / New Zealand English. Never use American spelling.
+
 {banned}
 
 
@@ -296,7 +555,12 @@ ATS Keywords: {', '.join(scorecard.get('ats_keywords_to_include', [])[:12])}
 Candidate Profile Summary: {profile.get('professional_summary', '')}
 """
     provider = get_provider()
-    notes = await provider.generate(prompt)
+    notes = to_british(await provider.generate(
+        prompt,
+        banned_phrases=get_banned_phrases_list(db),
+        in_progress_certs=in_progress_cert_names(profile),
+        former_employers=former_employer_names(profile),
+    ))
     app.cv_adjustment_notes = notes
     db.commit()
     persist_application_files(db, app_id)
@@ -311,17 +575,39 @@ async def generate_interview_prep(app_id: int, db: Session = Depends(get_db)):
     if not app.job_analysis:
         raise HTTPException(status_code=400, detail="Run job analysis first.")
 
-    profile = build_profile_summary(db)
+    profile = compact_profile_for_prompt(build_profile_summary(db, mode="interview_prep"))
     banned = get_banned_phrases_instruction(db)
-    prompt = fill_prompt(
-        "interview_prep",
+    common = dict(
         PROFILE_SUMMARY=json.dumps(profile, indent=2),
         JOB_ANALYSIS=app.job_analysis,
         MATCH_SCORECARD=app.match_scorecard or "{}",
         BANNED_PHRASES=banned,
     )
     provider = get_provider()
-    prep = await provider.generate_json(prompt)
+
+    # Two focused calls rather than one huge one: an 8B model produces far better
+    # structured output on a smaller task, and the questions pack and the study
+    # plan are independent.
+    try:
+        questions = await provider.generate_json(
+            fill_prompt("interview_prep", **common),
+            required_keys=["technical_questions", "behavioural_questions",
+                           "scenario_questions", "gap_questions"],
+        )
+        study = await provider.generate_json(
+            fill_prompt("interview_prep_study", **common),
+            required_keys=["brush_up_topics", "preparation_plan"],
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"The local model returned an unusable response ({e}). Try regenerating, "
+                   "or pick a larger model in Settings.",
+        )
+
+    prep = {**questions, **study}
+    prep.setdefault("company_research_notes", "Placeholder - add your own research here")
+
     app.interview_prep = json.dumps(prep)
     db.commit()
     persist_application_files(db, app_id)
@@ -351,14 +637,14 @@ Write:
 3. A short recruiter intro message (max 300 chars) they can send on LinkedIn
 4. 3-5 skills to pin on their LinkedIn profile for this role
 
-Role: {app.role} at {app.company or 'the company'}
+Role: {app.role} at {_company_display(app)}
 Required Skills: {', '.join(analysis.get('required_skills', [])[:10])}
 Suggested Angle: {scorecard.get('suggested_angle', '')}
 
 Format as markdown with clear headers.
 """
     provider = get_provider()
-    angle = await provider.generate(prompt)
+    angle = to_british(await provider.generate(prompt, banned_phrases=get_banned_phrases_list(db)))
     app.linkedin_angle = angle
     db.commit()
     persist_application_files(db, app_id)
@@ -378,6 +664,7 @@ async def generate_tailored_cv(app_id: int, db: Session = Depends(get_db)):
     if not master or not master.content_markdown:
         raise HTTPException(status_code=400, detail="No master CV found. Generate your master CV first.")
 
+    profile = build_profile_summary(db)
     banned = get_banned_phrases_instruction(db)
     job_analysis = app.job_analysis or "{}"
     prompt = fill_prompt(
@@ -386,11 +673,17 @@ async def generate_tailored_cv(app_id: int, db: Session = Depends(get_db)):
         CV_NOTES=app.cv_adjustment_notes,
         JOB_ANALYSIS=job_analysis,
         ROLE_TITLE=app.role or "the role",
-        COMPANY_NAME=app.company or "the company",
+        COMPANY_NAME=_company_display(app),
         BANNED_PHRASES=banned,
     )
     provider = get_provider()
-    content = await provider.generate(prompt)
+    content = to_british(await provider.generate(
+        prompt,
+        banned_phrases=get_banned_phrases_list(db),
+        flag_years_experience=True,
+        in_progress_certs=in_progress_cert_names(profile),
+        former_employers=former_employer_names(profile),
+    ))
     app.tailored_cv = content
     db.commit()
     persist_application_files(db, app_id)
@@ -407,6 +700,7 @@ def export_application(app_id: int, fmt: str, section: str = "cover-letter", db:
         "cover-letter": app.cover_letter,
         "cv-notes": app.cv_adjustment_notes,
         "tailored-cv": app.tailored_cv,
+        "custom-cv": app.custom_cv,
         "linkedin": app.linkedin_angle,
         "scorecard": json.dumps(json.loads(app.match_scorecard), indent=2) if app.match_scorecard else None,
     }

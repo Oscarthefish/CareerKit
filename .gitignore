@@ -30,3 +30,18 @@ config/settings.json
 data/**
 !data/.gitkeep
 
+# Defence-in-depth: local databases and personal documents should never be
+# committed regardless of where they end up. CareerKit's own data (DB,
+# uploaded/generated CVs, exports) already lives entirely under data/ above -
+# these are a backstop in case something lands outside that directory.
+*.sqlite
+*.sqlite3
+*.db
+*.pdf
+*.docx
+
+# Personal profile seeding script - contains real career/certification data
+backend/app/seed_profile.py
+
+# Personal identifiers used by scripts/privacy-check.sh - never commit this
+.privacy-identifiers.local

@@ -7,14 +7,18 @@ import AIButton from '@/components/AIButton'
 import FileUpload from '@/components/FileUpload'
 import BannedPhrasesWidget from '@/components/BannedPhrasesWidget'
 import CVRenderer from '@/components/CVRenderer'
+import EvidenceFeedbackWidget from '@/components/EvidenceFeedbackWidget'
 import {
-  getApplication, updateApplication, analyzeJob, generateScorecard,
+  getApplication, updateApplication, analyzeJob, generateScorecard, generateJobMatch, generateCustomCV,
   generateCoverLetter, generateCVNotes, generateInterviewPrep,
   generateLinkedInAngle, generateTailoredCV, uploadJobDescription, exportApplication
 } from '@/lib/api'
-import type { JobApplication, JobAnalysis, MatchScorecard, InterviewPrep, BrushUpTopic, InterviewQuestion } from '@/lib/types'
+import type {
+  JobApplication, JobAnalysis, MatchScorecard, InterviewPrep, BrushUpTopic, InterviewQuestion,
+  JobMatchResult, Coverage, RecommendationTier, PriorityFix, CustomCvResult,
+} from '@/lib/types'
 
-const TABS = ['Overview', 'Job Analysis', 'Match Scorecard', 'Cover Letter', 'CV Notes', 'Interview Prep', 'LinkedIn', 'Notes']
+const TABS = ['Overview', 'Job Analysis', 'Job Match', 'Match Scorecard', 'Cover Letter', 'CV Notes', 'Interview Prep', 'LinkedIn', 'Notes']
 
 const STATUS_OPTIONS = ['draft', 'applied', 'interviewing', 'offered', 'rejected', 'withdrawn']
 
@@ -136,6 +140,7 @@ export default function ApplicationDetailPage() {
         {/* Tab content */}
         {tab === 'Overview' && <TabOverview app={app} refresh={refresh} appId={appId} />}
         {tab === 'Job Analysis' && <TabJobAnalysis app={app} refresh={refresh} appId={appId} />}
+        {tab === 'Job Match' && <TabJobMatch app={app} refresh={refresh} appId={appId} />}
         {tab === 'Match Scorecard' && <TabScorecard app={app} refresh={refresh} appId={appId} />}
         {tab === 'Cover Letter' && <TabCoverLetter app={app} refresh={refresh} appId={appId} />}
         {tab === 'CV Notes' && <TabCVNotes app={app} refresh={refresh} appId={appId} />}
@@ -320,6 +325,399 @@ function TabJobAnalysis({ app, refresh, appId }: { app: JobApplication; refresh:
       </div>
     </div>
   )
+}
+
+const COVERAGE_BADGE: Record<Coverage, string> = {
+  STRONG_EVIDENCE: 'badge-green',
+  PARTIAL_EVIDENCE: 'badge-yellow',
+  NO_EVIDENCE: 'badge-red',
+  UNKNOWN: 'badge-gray',
+}
+
+const TIER_BADGE: Record<RecommendationTier, string> = {
+  SAFE_OPTIMISATION: 'badge-green',
+  EVIDENCE_NEEDED: 'badge-yellow',
+  DO_NOT_ADD: 'badge-red',
+}
+
+const TIER_LABEL: Record<RecommendationTier, string> = {
+  SAFE_OPTIMISATION: 'Safe optimisation',
+  EVIDENCE_NEEDED: 'Evidence needed',
+  DO_NOT_ADD: 'Do not add',
+}
+
+const SEVERITY_ICON: Record<PriorityFix['severity'], string> = {
+  critical: '🔴', high: '🟠', medium: '🟡', low: '🟢',
+}
+
+function ScoreDial({ label, score }: { label: string; score: number }) {
+  const color = score >= 80 ? 'text-green-600' : score >= 60 ? 'text-yellow-600' : 'text-red-600'
+  return (
+    <div className="text-center">
+      <div className={`text-3xl font-bold ${color}`}>{score}%</div>
+      <div className="text-xs text-gray-500 mt-1">{label}</div>
+    </div>
+  )
+}
+
+function TabJobMatch({ app, refresh, appId }: { app: JobApplication; refresh: () => void; appId: number }) {
+  const [expandedSub, setExpandedSub] = useState<string | null>(null)
+  const [showAllFixes, setShowAllFixes] = useState(false)
+  const result = app.job_match_result as JobMatchResult | null
+
+  if (!result) {
+    return (
+      <div className="card p-8 text-center">
+        <p className="text-gray-500 text-sm mb-4">Generate a Job Match report to see an explainable score against this role.</p>
+        {app.job_analysis ? (
+          <AIButton
+            label="Generate Job Match Report"
+            loadingLabel="Analysing (this can take a few minutes on a local model)..."
+            onClick={async () => { await generateJobMatch(appId); refresh() }}
+          />
+        ) : (
+          <p className="text-xs text-gray-400">Run job analysis first.</p>
+        )}
+      </div>
+    )
+  }
+
+  const { job_match, title_match, requirement_coverage, hard_skills, keyword_coverage, priority_fixes } = result
+  const subScoreEntries = Object.entries(job_match.sub_scores).filter(([, v]) => v.score !== null) as
+    [string, { score: number; requirement_count: number }][]
+  const subScoreLabel: Record<string, string> = {
+    hard_skills: 'Hard Skills', experience_seniority: 'Experience', qualifications: 'Qualifications',
+    soft_skills: 'Soft Skills', industry_context: 'Industry Context', job_title: 'Job Title',
+  }
+  const fixesToShow = showAllFixes ? [...priority_fixes.top, ...priority_fixes.more] : priority_fixes.top
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <AIButton
+          label="Regenerate"
+          loadingLabel="Analysing..."
+          onClick={async () => { await generateJobMatch(appId); refresh() }}
+          variant="secondary"
+        />
+      </div>
+
+      {/* Hero score */}
+      <div className="card p-6 text-center">
+        <div className="text-5xl font-bold text-brand-700">{job_match.overall}%</div>
+        <div className="text-sm font-semibold text-gray-600 mt-1">JOB MATCH · {job_match.band}</div>
+        <p className="text-xs text-gray-400 mt-3 max-w-lg mx-auto">
+          CareerKit Job Match estimates how closely your CV aligns with this job description.
+          Employers and ATS platforms use different methods and may not assign a comparable score.
+          A high score does not guarantee an interview — aim for accurate, relevant alignment rather
+          than maximising the score.
+        </p>
+        {(result.ats_check || result.recruiter_readiness) && (
+          <div className="flex justify-center gap-10 mt-5 pt-5 border-t border-gray-100">
+            {result.ats_check && (
+              <ScoreDial label={`ATS Compatibility · ${result.ats_check.band}`} score={result.ats_check.score} />
+            )}
+            {result.recruiter_readiness && (
+              <ScoreDial
+                label={`Recruiter Readiness · ${result.recruiter_readiness.band}`}
+                score={result.recruiter_readiness.score}
+              />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Explainability breakdown */}
+      <div className="card p-5">
+        <h3 className="font-semibold text-gray-900 mb-4 text-sm">Why this score</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+          {subScoreEntries.map(([key, v]) => (
+            <button key={key} onClick={() => setExpandedSub(expandedSub === key ? null : key)} className="text-left">
+              <ScoreDial label={subScoreLabel[key] || key} score={v.score} />
+            </button>
+          ))}
+        </div>
+        {expandedSub && (
+          <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-600">
+            {subScoreLabel[expandedSub]} is based on {job_match.sub_scores[expandedSub as keyof typeof job_match.sub_scores].requirement_count} requirement(s)
+            of this type, each weighted by how essential it is to the role (critical / important / desirable) and how strongly your Master CV evidences it.
+            See the Requirement Coverage and Hard Skills tables below for the detail behind this number.
+          </div>
+        )}
+      </div>
+
+      {/* Job title */}
+      <div className="card p-5">
+        <h3 className="font-semibold text-gray-900 mb-2 text-sm">Job Title & Seniority</h3>
+        <div className="flex items-center gap-2 mb-1">
+          <span className={TIER_BADGE[title_match.state === 'EXACT_MATCH' || title_match.state === 'STRONG_EQUIVALENT' ? 'SAFE_OPTIMISATION' : title_match.state === 'NO_ALIGNMENT' ? 'DO_NOT_ADD' : 'EVIDENCE_NEEDED']}>
+            {title_match.state.replace(/_/g, ' ')}
+          </span>
+          {title_match.matched_title && <span className="text-sm text-gray-700">{title_match.matched_title}</span>}
+        </div>
+        <p className="text-xs text-gray-500">{title_match.explanation}</p>
+      </div>
+
+      {/* Priority fixes */}
+      {(priority_fixes.top.length > 0) && (
+        <div className="card p-5">
+          <h3 className="font-semibold text-gray-900 mb-3 text-sm">Priority Improvements</h3>
+          <div className="space-y-3">
+            {fixesToShow.map((f, i) => (
+              <div key={i} className="flex gap-2 text-sm">
+                <span>{SEVERITY_ICON[f.severity]}</span>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-gray-900">{f.requirement}</span>
+                    <span className={TIER_BADGE[f.tier]}>{TIER_LABEL[f.tier]}</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">{f.message}</p>
+                  {f.tier === 'EVIDENCE_NEEDED' && (
+                    <EvidenceFeedbackWidget
+                      skillName={f.requirement}
+                      context={`${app.role || 'this role'}${app.company ? ` at ${app.company}` : ''}`}
+                    />
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          {priority_fixes.more.length > 0 && (
+            <button onClick={() => setShowAllFixes(!showAllFixes)} className="btn-ghost btn-sm mt-3">
+              {showAllFixes ? 'Show fewer' : `View all findings (${priority_fixes.more.length} more)`}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Requirement coverage */}
+      <div className="card p-5 overflow-x-auto">
+        <h3 className="font-semibold text-gray-900 mb-3 text-sm">Requirement Coverage</h3>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+              <th className="pb-2 font-medium">Requirement</th>
+              <th className="pb-2 font-medium">Importance</th>
+              <th className="pb-2 font-medium">Coverage</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {requirement_coverage.map((r, i) => (
+              <tr key={i}>
+                <td className="py-2 pr-3 text-gray-900">{r.name}</td>
+                <td className="py-2 pr-3 text-xs text-gray-500 capitalize">{r.importance}</td>
+                <td className="py-2">
+                  <span className={COVERAGE_BADGE[r.coverage]}>{r.icon} {r.label}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Hard skills */}
+      <div className="card p-5 overflow-x-auto">
+        <h3 className="font-semibold text-gray-900 mb-3 text-sm">Hard Skills Analysis</h3>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
+              <th className="pb-2 font-medium">Skill</th>
+              <th className="pb-2 font-medium">Job importance</th>
+              <th className="pb-2 font-medium">CV coverage</th>
+              <th className="pb-2 font-medium">Assessment</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {hard_skills.map((s, i) => (
+              <tr key={i}>
+                <td className="py-2 pr-3 text-gray-900">{s.skill}</td>
+                <td className="py-2 pr-3 text-xs text-gray-500 capitalize">{s.importance}</td>
+                <td className="py-2 pr-3"><span className={COVERAGE_BADGE[s.coverage]}>{COVERAGE_LABEL_SHORT[s.coverage]}</span></td>
+                <td className="py-2 text-xs text-gray-600">{s.assessment}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Keyword coverage */}
+      <div className="card p-5">
+        <h3 className="font-semibold text-gray-900 mb-3 text-sm">Keyword Coverage</h3>
+        <div className="flex items-center gap-4 mb-3 text-sm">
+          <span className="text-green-700 font-medium">{keyword_coverage.matched} matched</span>
+          <span className="text-yellow-700 font-medium">{keyword_coverage.partial} partial</span>
+          <span className="text-red-700 font-medium">{keyword_coverage.missing} missing</span>
+          <span className="text-gray-400 ml-auto">{keyword_coverage.coverage_pct}% coverage</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {Object.entries(keyword_coverage.by_category).map(([cat, stats]) => (
+            <div key={cat} className="p-3 bg-gray-50 rounded-lg text-xs">
+              <p className="font-semibold text-gray-700 capitalize mb-1">{cat.replace(/_/g, ' ')}</p>
+              <p className="text-gray-500">{stats.matched} matched · {stats.partial} partial · {stats.missing} missing</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Custom CV creation + rescan */}
+      <CustomCvPanel app={app} result={result} appId={appId} refresh={refresh} />
+    </div>
+  )
+}
+
+function CustomCvPanel({
+  app, result, appId, refresh,
+}: { app: JobApplication; result: JobMatchResult; appId: number; refresh: () => void }) {
+  const allFixes = [...result.priority_fixes.top, ...result.priority_fixes.more]
+  const safeFixes = allFixes.filter((f) => f.tier === 'SAFE_OPTIMISATION')
+  const lockedFixes = allFixes.filter((f) => f.tier !== 'SAFE_OPTIMISATION')
+
+  const [selected, setSelected] = useState<Set<string>>(new Set(safeFixes.map((f) => f.requirement)))
+  const [step, setStep] = useState<'select' | 'review'>('select')
+  const [cvResult, setCvResult] = useState<CustomCvResult | null>(
+    app.custom_cv ? { custom_cv: app.custom_cv, applied_fixes: app.custom_cv_fixes_applied || [] } as CustomCvResult : null
+  )
+
+  const toggle = (name: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      next.has(name) ? next.delete(name) : next.add(name)
+      return next
+    })
+  }
+
+  const handleGenerate = async () => {
+    const data: any = await generateCustomCV(appId, Array.from(selected))
+    setCvResult(data)
+    refresh()
+  }
+
+  if (safeFixes.length === 0 && !cvResult) {
+    return (
+      <div className="card p-5">
+        <h3 className="font-semibold text-gray-900 mb-2 text-sm">Create Custom CV</h3>
+        <p className="text-xs text-gray-400">
+          No changes are currently backed by evidence in your Master CV — nothing safe to apply yet.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="card p-5">
+      <h3 className="font-semibold text-gray-900 mb-1 text-sm">Create Custom CV</h3>
+      <p className="text-xs text-gray-400 mb-4">
+        Applies only the changes below to a new copy of your Master CV. Changes still needing evidence are
+        shown but can't be selected — add the evidence to your Master CV first.
+      </p>
+
+      {step === 'select' && (
+        <>
+          <div className="space-y-2 mb-4">
+            {safeFixes.map((f) => (
+              <label key={f.requirement} className="flex items-start gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selected.has(f.requirement)}
+                  onChange={() => toggle(f.requirement)}
+                  className="mt-1"
+                />
+                <div>
+                  <span className="font-medium text-gray-900">{f.requirement}</span>
+                  <p className="text-xs text-gray-500">{f.message}</p>
+                </div>
+              </label>
+            ))}
+            {lockedFixes.map((f) => (
+              <div key={f.requirement} className="flex items-start gap-2 text-sm opacity-50">
+                <input type="checkbox" checked={false} disabled className="mt-1" />
+                <div>
+                  <span className="font-medium text-gray-900">{f.requirement}</span>
+                  <span className={`ml-2 ${TIER_BADGE[f.tier]}`}>{TIER_LABEL[f.tier]}</span>
+                  <p className="text-xs text-gray-500">{f.message}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500">{selected.size} change{selected.size === 1 ? '' : 's'} selected</span>
+            <button
+              onClick={() => setStep('review')}
+              disabled={selected.size === 0}
+              className="btn-secondary btn-sm ml-auto"
+            >
+              Review Selected Changes
+            </button>
+          </div>
+        </>
+      )}
+
+      {step === 'review' && (
+        <>
+          <div className="space-y-2 mb-4">
+            {safeFixes.filter((f) => selected.has(f.requirement)).map((f) => (
+              <div key={f.requirement} className="p-3 bg-gray-50 rounded-lg text-sm">
+                <span className="font-medium text-gray-900">{f.requirement}</span>
+                <p className="text-xs text-gray-500 mt-0.5">{f.message}</p>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setStep('select')} className="btn-ghost btn-sm">Back</button>
+            <AIButton
+              label={`Generate Custom CV (${selected.size} change${selected.size === 1 ? '' : 's'})`}
+              loadingLabel="Generating and rescanning..."
+              onClick={handleGenerate}
+            />
+          </div>
+        </>
+      )}
+
+      {cvResult && (cvResult.before || cvResult.after) && (
+        <div className="mt-6 pt-6 border-t border-gray-100">
+          <h4 className="font-semibold text-gray-900 mb-3 text-sm">Before → After</h4>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            <RescanScore label="Job Match" before={cvResult.before?.job_match} after={cvResult.after?.job_match} />
+            <RescanScore label="ATS Compatibility" before={cvResult.before?.ats_check} after={cvResult.after?.ats_check} />
+            <RescanScore label="Recruiter Readiness" before={cvResult.before?.recruiter_readiness} after={cvResult.after?.recruiter_readiness} />
+          </div>
+          <p className="text-xs text-gray-400 mb-4">
+            Job Match measures evidence in your structured Master CV data, so it typically won't move from
+            wording changes alone — that's intentional, not a bug: CareerKit won't inflate this score just
+            because the CV reads better. ATS Compatibility and Recruiter Readiness are text-driven and
+            reflect the real improvement above.
+          </p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs text-gray-400">Applied: {cvResult.applied_fixes.join(', ')}</p>
+            <div className="flex gap-2">
+              <a href={exportApplication(appId, 'md', 'custom-cv')} download className="btn-ghost btn-sm">MD</a>
+              <a href={exportApplication(appId, 'docx', 'custom-cv')} download className="btn-ghost btn-sm">DOCX</a>
+              <a href={exportApplication(appId, 'pdf', 'custom-cv')} download className="btn-ghost btn-sm">PDF</a>
+            </div>
+          </div>
+          <CVRenderer markdown={cvResult.custom_cv} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RescanScore({ label, before, after }: { label: string; before?: number | null; after?: number | null }) {
+  const improved = before != null && after != null && after > before
+  return (
+    <div className="p-3 bg-gray-50 rounded-lg text-center">
+      <p className="text-xs font-medium text-gray-500 mb-1">{label}</p>
+      <p className="text-sm">
+        <span className="text-gray-400">{before ?? '—'}%</span>
+        <span className="mx-1 text-gray-300">→</span>
+        <span className={`font-bold ${improved ? 'text-green-600' : 'text-gray-700'}`}>{after ?? '—'}%</span>
+      </p>
+    </div>
+  )
+}
+
+const COVERAGE_LABEL_SHORT: Record<Coverage, string> = {
+  STRONG_EVIDENCE: 'Strong', PARTIAL_EVIDENCE: 'Limited', NO_EVIDENCE: 'None', UNKNOWN: 'Unknown',
 }
 
 function TabScorecard({ app, refresh, appId }: { app: JobApplication; refresh: () => void; appId: number }) {
@@ -548,6 +946,17 @@ function TabCoverLetter({ app, refresh, appId }: { app: JobApplication; refresh:
 
 function TabCVNotes({ app, refresh, appId }: { app: JobApplication; refresh: () => void; appId: number }) {
   const [showTailored, setShowTailored] = useState(false)
+  const [editingTailored, setEditingTailored] = useState(false)
+  const [tailoredValue, setTailoredValue] = useState(app.tailored_cv || '')
+  const [savingTailored, setSavingTailored] = useState(false)
+
+  const saveTailored = async () => {
+    setSavingTailored(true)
+    await updateApplication(appId, { tailored_cv: tailoredValue })
+    setSavingTailored(false)
+    setEditingTailored(false)
+    refresh()
+  }
 
   if (!app.cv_adjustment_notes) {
     return (
@@ -588,11 +997,12 @@ function TabCVNotes({ app, refresh, appId }: { app: JobApplication; refresh: () 
             <p className="text-xs text-gray-400 mt-0.5">A version of your master CV with the above changes applied, generated for this specific role.</p>
           </div>
           <div className="flex gap-2">
-            {app.tailored_cv && (
+            {app.tailored_cv && !editingTailored && (
               <>
                 <button onClick={() => setShowTailored(!showTailored)} className="btn-ghost btn-sm">
                   {showTailored ? 'Hide' : 'View'}
                 </button>
+                <button onClick={() => { setTailoredValue(app.tailored_cv || ''); setEditingTailored(true); setShowTailored(true) }} className="btn-secondary btn-sm">Edit</button>
                 <a href={exportApplication(appId, 'md', 'tailored-cv')} download className="btn-ghost btn-sm">MD</a>
                 <a href={exportApplication(appId, 'docx', 'tailored-cv')} download className="btn-ghost btn-sm">DOCX</a>
                 <a href={exportApplication(appId, 'pdf', 'tailored-cv')} download className="btn-ghost btn-sm">PDF</a>
@@ -601,12 +1011,26 @@ function TabCVNotes({ app, refresh, appId }: { app: JobApplication; refresh: () 
             <AIButton
               label={app.tailored_cv ? 'Regenerate' : 'Generate Tailored CV'}
               loadingLabel="Tailoring CV..."
-              onClick={async () => { await generateTailoredCV(appId); refresh(); setShowTailored(true) }}
+              onClick={async () => { await generateTailoredCV(appId); refresh(); setShowTailored(true); setEditingTailored(false) }}
               variant={app.tailored_cv ? 'secondary' : 'primary'}
             />
           </div>
         </div>
-        {showTailored && app.tailored_cv && (
+        {showTailored && editingTailored && (
+          <div className="border-t border-gray-100">
+            <textarea
+              className="w-full p-6 text-sm text-gray-800 border-0 focus:ring-0 outline-none resize-none font-sans leading-relaxed"
+              rows={30}
+              value={tailoredValue}
+              onChange={(e) => setTailoredValue(e.target.value)}
+            />
+            <div className="px-6 py-3 border-t border-gray-100 flex gap-2">
+              <button onClick={saveTailored} disabled={savingTailored} className="btn-primary btn-sm">{savingTailored ? 'Saving...' : 'Save'}</button>
+              <button onClick={() => setEditingTailored(false)} className="btn-ghost btn-sm">Cancel</button>
+            </div>
+          </div>
+        )}
+        {showTailored && !editingTailored && app.tailored_cv && (
           <div className="p-4 border-t border-gray-100">
             <CVRenderer markdown={app.tailored_cv} />
           </div>
@@ -643,6 +1067,23 @@ function TabInterviewPrep({ app, refresh, appId }: { app: JobApplication; refres
     { key: 'scenario_questions', title: 'Scenario Questions', promptField: 'suggested_approach' },
     { key: 'gap_questions', title: 'Gap Questions', promptField: 'suggested_framing' },
   ]
+
+  const hasContent =
+    sections.some(({ key }) => (prep[key] as InterviewQuestion[] | undefined)?.length) ||
+    prep.brush_up_topics?.length ||
+    prep.preparation_plan?.length ||
+    prep.questions_to_ask_recruiter?.length ||
+    prep.questions_to_ask_employer?.length
+
+  if (!hasContent) {
+    return (
+      <div className="card p-8 text-center">
+        <p className="text-gray-500 text-sm mb-1">The last generation did not return a usable interview prep pack.</p>
+        <p className="text-xs text-gray-400 mb-4">This can happen with a small local model. Try again, or switch to a larger model in Settings.</p>
+        <AIButton label="Regenerate" loadingLabel="Preparing..." onClick={async () => { await generateInterviewPrep(appId); refresh() }} />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">

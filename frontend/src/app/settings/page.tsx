@@ -39,7 +39,7 @@ export default function SettingsPage() {
     checkAI()
   }
 
-  const COMMON_MODELS = ['llama3', 'llama3:8b', 'llama3:70b', 'mistral', 'phi3', 'gemma2', 'qwen2.5']
+  const COMMON_MODELS = ['llama3.1', 'llama3.1:70b', 'llama3', 'mistral', 'phi3', 'gemma2', 'qwen2.5']
 
   return (
     <AppShell>
@@ -126,7 +126,7 @@ export default function SettingsPage() {
               className="input font-mono"
               value={form.ollama_model || ''}
               onChange={set('ollama_model')}
-              placeholder="llama3"
+              placeholder="llama3.1"
             />
             <div className="flex flex-wrap gap-1.5 mt-2">
               {COMMON_MODELS.map((m) => (
@@ -142,7 +142,8 @@ export default function SettingsPage() {
               ))}
             </div>
             <p className="text-xs text-gray-400 mt-2">
-              For cyber security work, llama3:70b or mistral:7b are recommended. Smaller models work for most tasks.
+              llama3.1 is recommended: it has a large context window, which the interview prep and
+              match scorecard steps need. llama3.1:70b is better still if your machine can run it.
             </p>
           </div>
 

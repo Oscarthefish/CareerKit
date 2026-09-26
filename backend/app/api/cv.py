@@ -1,4 +1,5 @@
 import json
+import re
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -12,6 +13,76 @@ from ..exporters import markdown_exporter, docx_exporter, pdf_exporter
 from ..storage.file_storage import get_exports_dir
 
 router = APIRouter(prefix="/api/cv", tags=["cv"])
+
+_STOPWORDS = {
+    "the", "a", "an", "and", "or", "to", "of", "in", "on", "for", "with", "at",
+    "as", "from", "by", "that", "this", "was", "were", "is", "are", "its",
+    "it's", "successfully", "approximately", "into", "over", "out", "upon",
+}
+
+
+def _significant_words(text: str) -> set[str]:
+    words = (raw.strip(".,;:()\"'").lower() for raw in (text or "").split())
+    return {w for w in words if len(w) > 3 and w not in _STOPWORDS}
+
+
+def _build_achievement_bullet(title: str, detail: str) -> str:
+    """Combine an achievement's title with its result/action detail, but only
+    when the detail adds real information beyond the title - several
+    achievements' "result" field is close to a restatement of the title
+    (e.g. title "Increased endpoint protection coverage from ~60% to 98%",
+    result "Increased endpoint protection coverage from approximately 60% to
+    98%..."), and concatenating those would just be duplication."""
+    title = (title or "").strip()
+    detail = (detail or "").strip()
+    if not detail:
+        return title
+    title_words = _significant_words(title)
+    detail_words = _significant_words(detail)
+    if not detail_words:
+        return title
+    overlap = len(detail_words & title_words) / len(detail_words)
+    if overlap > 0.6:
+        return title
+    sep = "" if title.endswith((".", "!", "?")) else "."
+    return f"{title}{sep} {detail}"
+
+
+def _enrich_achievement_bullets(content: str, achievements: list[dict]) -> str:
+    """Safety net: cv_generation.md already instructs the model to write each
+    achievement bullet from its situation/action/result detail, using "title"
+    only as a label - but a local model routinely just echoes the title
+    verbatim as the whole bullet, silently dropping the specific fact (a
+    metric, a named detail) that made the achievement worth including in the
+    first place. Rather than trust that instruction alone, check the
+    "## SELECTED ACHIEVEMENTS" section after the fact and enrich any bullet
+    that's still just the bare title."""
+    section_match = re.search(r"(^## SELECTED ACHIEVEMENTS\s*\n)(.*?)(?=\n## |\Z)", content, re.MULTILINE | re.DOTALL)
+    if not section_match:
+        return content
+    section_body = section_match.group(2)
+
+    for a in achievements:
+        title = (a.get("title") or "").strip()
+        if not title:
+            continue
+        detail = a.get("result") or a.get("action") or ""
+
+        def _replace_line(m, title=title, detail=detail):
+            existing = m.group(1).strip()
+            # If the model already wove in enough of the detail itself, leave
+            # its wording alone rather than overwrite a perfectly good bullet.
+            detail_words = _significant_words(detail)
+            if detail_words:
+                existing_overlap = len(detail_words & _significant_words(existing)) / len(detail_words)
+                if existing_overlap >= 0.5:
+                    return m.group(0)
+            return f"- {_build_achievement_bullet(title, detail)}"
+
+        line_pattern = re.compile(rf"^- +({re.escape(title)}.*)$", re.MULTILINE | re.IGNORECASE)
+        section_body = line_pattern.sub(_replace_line, section_body, count=1)
+
+    return content[:section_match.start(2)] + section_body + content[section_match.end(2):]
 
 
 @router.get("/current")
@@ -71,9 +142,9 @@ def save_cv(body: CVSaveRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/generate")
-async def generate_cv(db: Session = Depends(get_db)):
+async def generate_cv(mode: str = "cv_safe", db: Session = Depends(get_db)):
     from ..models.profile import ExampleCV
-    profile = build_profile_summary(db)
+    profile = build_profile_summary(db, mode=mode)
 
     # Gather style insights from uploaded example CVs
     examples = db.query(ExampleCV).all()
@@ -103,8 +174,9 @@ async def generate_cv(db: Session = Depends(get_db)):
                 style_guidance += "Formatting notes from examples:\n"
                 style_guidance += "\n".join(insights[:4])
 
-    from ..services.profile_service import get_banned_phrases_instruction
+    from ..services.profile_service import get_banned_phrases_instruction, get_banned_phrases_list
     banned = get_banned_phrases_instruction(db)
+    banned_list = get_banned_phrases_list(db)
     prompt = fill_prompt(
         "cv_generation",
         PROFILE_JSON=json.dumps(profile, indent=2),
@@ -112,8 +184,66 @@ async def generate_cv(db: Session = Depends(get_db)):
         BANNED_PHRASES=banned,
     )
     provider = get_provider()
-    content = await provider.generate(prompt)
-    row = CVVersion(version_name="AI Generated", content_markdown=content)
+    content = await provider.generate(prompt, banned_phrases=banned_list, flag_years_experience=True)
+    # Safety net: the local model occasionally emits a bare "-" bullet for a
+    # role with no recorded detail. Strip it in code rather than trusting the
+    # model to always follow the "no data, no bullet" instruction.
+    content = re.sub(r"\n[ \t]*-[ \t]*\n", "\n", content)
+
+    # Safety net: Platforms & Tools is meant to be copied verbatim from
+    # platforms_and_tools_display (built deterministically so it can't
+    # fabricate or drop a tool), but a long list occasionally gets truncated,
+    # merged into the previous line, or dropped by the model anyway. Force the
+    # block to the correct value after the fact rather than trust the copy.
+    # Laid out as one category per line (the user's preferred layout) rather
+    # than a single packed paragraph.
+    tools_lines = profile.get("platforms_and_tools_display", [])
+    if tools_lines:
+        # The model sometimes also leaks the same tool list into the previous
+        # ("Security Operations & Incident Response") line before (or instead
+        # of) placing it correctly. Strip that leak using the known category
+        # names, since the correct copy is guaranteed to exist below regardless.
+        categories = [line.split(":", 1)[0].strip() for line in tools_lines]
+        cat_pattern = "|".join(re.escape(c) for c in categories if c)
+        if cat_pattern:
+            leak_pattern = re.compile(
+                rf"(\*\*Security Operations & Incident Response:\*\*.*?),?\s*(?:{cat_pattern}):.*$",
+                re.MULTILINE,
+            )
+            content = leak_pattern.sub(lambda m: m.group(1), content, count=1)
+
+        correct_block = "**Platforms & Tools:**\n" + "\n".join(tools_lines)
+        # Matches the "**Platforms & Tools:**" line plus every line straight
+        # after it that isn't itself a bold label or a heading — covers both
+        # the old single-paragraph layout and this new multi-line one.
+        pattern = re.compile(r"^\*\*Platforms & Tools:\*\*.*(?:\n(?!\*\*|##).*)*", re.MULTILINE)
+        if pattern.search(content):
+            content = pattern.sub(lambda m: correct_block, content, count=1)
+        else:
+            ops_pattern = re.compile(r"^\*\*Security Operations & Incident Response:\*\*.*$", re.MULTILINE)
+            if ops_pattern.search(content):
+                content = ops_pattern.sub(lambda m: m.group(0) + "\n" + correct_block, content, count=1)
+            else:
+                heading_pattern = re.compile(r"^## KEY SKILLS\s*$", re.MULTILINE)
+                content = heading_pattern.sub(lambda m: m.group(0) + "\n" + correct_block, content, count=1)
+
+    # Safety net: a project's URL occasionally gets dropped even though it was
+    # right there in the data. Append it back onto that project's line if the
+    # URL string isn't present anywhere in the output.
+    for p in profile.get("projects", []):
+        url = p.get("url")
+        name = p.get("name")
+        if not url or not name or url in content:
+            continue
+        name_line_pattern = re.compile(
+            rf"^(- \**{re.escape(name)}\**.*$)", re.MULTILINE
+        )
+        if name_line_pattern.search(content):
+            content = name_line_pattern.sub(lambda m: m.group(1) + f" URL: {url}", content, count=1)
+
+    content = _enrich_achievement_bullets(content, profile.get("achievements", []))
+
+    row = CVVersion(version_name=f"AI Generated ({mode})", content_markdown=content)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -126,12 +256,37 @@ async def generate_cv(db: Session = Depends(get_db)):
 
 @router.post("/review")
 async def brutal_review(db: Session = Depends(get_db)):
+    from ..services.recruiter.scoring import get_or_compute_recruiter_readiness
+
     latest = db.query(CVVersion).order_by(CVVersion.id.desc()).first()
     if not latest or not latest.content_markdown:
         raise HTTPException(status_code=400, detail="No CV found. Generate your CV first.")
-    prompt = fill_prompt("brutal_review", CV_CONTENT=latest.content_markdown)
     provider = get_provider()
-    result = await provider.generate_json(prompt)
+    # force=True: this is an explicit user action, so always get a fresh take
+    # rather than the cached score from a previous click.
+    result = await get_or_compute_recruiter_readiness(provider, db, latest, force=True)
+    if result is None:
+        raise HTTPException(
+            status_code=502,
+            detail="The local model returned an unusable response. Try again, or pick a larger model in Settings.",
+        )
+    return result
+
+
+@router.post("/ats-check")
+def ats_health_check(db: Session = Depends(get_db)):
+    """Master CV Health Check: ATS Compatibility only, no job description
+    needed. Fully deterministic (see services/ats) - the same CV content
+    always produces the same result."""
+    from ..services.ats.checks import run_ats_check
+    from ..services.ats.render import render_ats_view
+
+    latest = db.query(CVVersion).order_by(CVVersion.id.desc()).first()
+    if not latest or not latest.content_markdown:
+        raise HTTPException(status_code=400, detail="No CV found. Generate your CV first.")
+
+    result = run_ats_check(latest.content_markdown)
+    result["ats_parsed_view"] = render_ats_view(latest.content_markdown)
     return result
 
 

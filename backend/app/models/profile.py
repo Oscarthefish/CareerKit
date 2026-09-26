@@ -28,7 +28,9 @@ class WorkExperience(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     company = Column(String(200), nullable=False)
+    employer_public_name = Column(String(200))  # optional redacted/generic name for public-facing output
     role = Column(String(200), nullable=False)
+    alternative_titles = Column(Text, default="[]")  # JSON array
     start_date = Column(String(20))
     end_date = Column(String(20))
     is_current = Column(Boolean, default=False)
@@ -37,6 +39,8 @@ class WorkExperience(Base):
     key_responsibilities = Column(Text, default="[]")  # JSON array
     technologies = Column(Text, default="[]")  # JSON array
     order_index = Column(Integer, default=0)
+    # public, cv_safe, recruiter_only, interview_only, confidential, do_not_use
+    confidentiality_level = Column(String(20), default="cv_safe")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -45,10 +49,25 @@ class Skill(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
+    aliases = Column(Text, default="[]")  # JSON array — legacy/rebranded names, e.g. Cisco AMP -> Secure Endpoint
     category = Column(String(50))  # technical, soft, tool, framework, process
+    # For category="tool" only: the tool-type heading it's grouped under on the CV
+    # (e.g. "SIEM", "EDR", "Firewalls", "Email Security"). Lets the CV's Platforms
+    # & Tools section be built deterministically instead of trusting the model to
+    # group and deduplicate product names correctly every time.
+    tool_category = Column(String(50))
+    # Real and confirmed, but not every real tool needs to take up space on the
+    # CV — commodity tools a recruiter would expect and that are better raised
+    # in an interview can be tracked here without cluttering Platforms & Tools.
+    # Still included in the full skills data used for scorecards, LinkedIn, etc.
+    include_on_cv = Column(Boolean, default=True)
     proficiency = Column(String(50))  # expert, proficient, familiar, learning
     years_experience = Column(Float)
-    confidence = Column(String(20), default="confirmed")  # confirmed, inferred, weak, do_not_use
+    last_used = Column(String(20))
+    production_experience = Column(Boolean, default=True)  # hands-on/production vs training-only exposure
+    # confirmed_hands_on, working_knowledge, training_exposure, familiarity,
+    # interest, unverified, do_not_include (legacy: confirmed, inferred, weak, do_not_use)
+    confidence = Column(String(30), default="confirmed_hands_on")
     notes = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -64,6 +83,51 @@ class Certification(Base):
     credential_id = Column(String(200))
     url = Column(String(500))
     in_progress = Column(Boolean, default=False)
+    # active, expired, retired_legacy, unverified_status — for wording like "earned 2018" vs "currently active"
+    status = Column(String(30), default="active")
+    notes = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Training(Base):
+    """Professional training and courses that are NOT certifications.
+
+    Kept separate from Certification so training exposure can never be
+    silently presented as a passed certification exam.
+    """
+    __tablename__ = "training"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(300), nullable=False)
+    provider = Column(String(200))
+    date = Column(String(20))
+    delivery_type = Column(String(50))  # classroom, online, self-paced, conference-workshop
+    duration = Column(String(50))
+    # completed, enrolled, in_progress, purchased_not_started, unconfirmed
+    completion_status = Column(String(30), default="completed")
+    related_certification = Column(String(200))
+    tools = Column(Text, default="[]")  # JSON array
+    skills = Column(Text, default="[]")  # JSON array
+    evidence = Column(Text)
+    include_by_default = Column(Boolean, default=True)
+    confidence = Column(String(30), default="confirmed_hands_on")
+    notes = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CommunityInvolvement(Base):
+    __tablename__ = "community_involvement"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event = Column(String(300), nullable=False)
+    location = Column(String(200))
+    date = Column(String(50))
+    # attendee, participant, speaker, organiser, regular_attendee
+    participation_type = Column(String(50), default="attendee")
+    notes = Column(Text)
+    evidence = Column(Text)
+    include_on_cv = Column(Boolean, default=False)
+    include_on_linkedin = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -79,7 +143,8 @@ class Achievement(Base):
     skills_demonstrated = Column(Text, default="[]")  # JSON array
     who_benefited = Column(Text)
     measurable_outcome = Column(Text)
-    confidence = Column(String(20), default="confirmed")
+    confidence = Column(String(30), default="confirmed_hands_on")
+    confidentiality_level = Column(String(20), default="cv_safe")
     bullet_plain = Column(Text)
     bullet_strong = Column(Text)
     bullet_senior = Column(Text)
@@ -100,7 +165,8 @@ class Project(Base):
     outcomes = Column(Text)
     url = Column(String(500))
     date_range = Column(String(100))
-    confidence = Column(String(20), default="confirmed")
+    confidence = Column(String(30), default="confirmed_hands_on")
+    confidentiality_level = Column(String(20), default="cv_safe")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -114,7 +180,8 @@ class EvidenceItem(Base):
     skills_demonstrated = Column(Text, default="[]")  # JSON array
     outcome = Column(Text)
     value = Column(Text)
-    confidence = Column(String(20), default="confirmed")
+    confidence = Column(String(30), default="confirmed_hands_on")
+    confidentiality_level = Column(String(20), default="cv_safe")
     notes = Column(Text)
     source = Column(String(300))
     created_at = Column(DateTime, default=datetime.utcnow)
