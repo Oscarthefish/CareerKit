@@ -7,6 +7,8 @@ from app.api.cv import (
     _ensure_all_achievements_present,
     _ensure_all_roles_present,
     _force_correct_certifications,
+    _force_correct_ops_skills_line,
+    _force_correct_projects,
     _format_role_date,
     _merge_key_skills_continuations,
     _strip_trailing_line_commas,
@@ -379,6 +381,83 @@ class ForceCorrectCertificationsTests(unittest.TestCase):
     def test_no_certifications_data_leaves_content_unchanged(self):
         content = "# Alex Example\n\n## CERTIFICATIONS\n- Something\n\n## EDUCATION\n- x\n"
         self.assertEqual(_force_correct_certifications(content, []), content)
+
+
+class ForceCorrectOpsSkillsLineTests(unittest.TestCase):
+    def test_replaces_inflated_line_with_real_skill_names(self):
+        skills = [
+            {"name": "Incident Response", "category": "technical"},
+            {"name": "Network Security", "category": "technical"},
+            {"name": "Post-Incident Review & Continuous Improvement", "category": "process"},
+        ]
+        content = (
+            "## KEY SKILLS\n"
+            "**Security Operations & Incident Response:** SIEM investigation, Timeline reconstruction, Senior technical judgement\n"
+            "**Security Domains:** Network Security\n"
+        )
+        result = _force_correct_ops_skills_line(content, skills)
+        self.assertIn(
+            "**Security Operations & Incident Response:** Incident Response, Post-Incident Review & Continuous Improvement",
+            result,
+        )
+        self.assertNotIn("Timeline reconstruction", result)
+
+    def test_excludes_domain_skills_from_the_ops_line(self):
+        skills = [
+            {"name": "Incident Response", "category": "technical"},
+            {"name": "Email Security", "category": "technical"},
+        ]
+        content = "**Security Operations & Incident Response:** old content\n"
+        result = _force_correct_ops_skills_line(content, skills)
+        self.assertIn("Incident Response", result)
+        self.assertNotIn("Email Security", result)
+
+    def test_no_matching_line_leaves_content_unchanged(self):
+        content = "## KEY SKILLS\n**Security Domains:** Network Security\n"
+        result = _force_correct_ops_skills_line(content, [{"name": "Incident Response", "category": "technical"}])
+        self.assertEqual(result, content)
+
+    def test_no_ops_category_skills_leaves_content_unchanged(self):
+        content = "**Security Operations & Incident Response:** old content\n"
+        result = _force_correct_ops_skills_line(content, [{"name": "Team Leadership", "category": "soft"}])
+        self.assertEqual(result, content)
+
+
+class ForceCorrectProjectsTests(unittest.TestCase):
+    def test_rebuilds_a_project_with_bold_name_and_all_labelled_lines(self):
+        projects = [{
+            "name": "SOC Analyst Toolbox",
+            "description": "A local-first investigation platform.",
+            "role": "Creator and sole developer",
+            "technologies": ["Splunk", "Jira"],
+            "outcomes": "Built and published a working tool.",
+            "url": "https://github.com/Oscarthefish/SOC-Analyst-Toolbox",
+        }]
+        content = "## PROJECTS\n- SOC Analyst Toolbox is a local-first tool.\n\n## CERTIFICATIONS\n- x\n"
+        result = _force_correct_projects(content, projects)
+        self.assertIn("- **SOC Analyst Toolbox** — A local-first investigation platform.", result)
+        self.assertIn("Role: Creator and sole developer", result)
+        self.assertIn("Technologies: Splunk, Jira", result)
+        self.assertIn("Outcomes: Built and published a working tool.", result)
+        self.assertIn("URL: https://github.com/Oscarthefish/SOC-Analyst-Toolbox", result)
+        self.assertIn("## CERTIFICATIONS", result)
+
+    def test_no_projects_section_does_not_crash(self):
+        content = "# Alex Example\n\n## CERTIFICATIONS\n- x\n"
+        result = _force_correct_projects(content, [{"name": "X", "description": "Y"}])
+        self.assertEqual(result, content)
+
+    def test_no_projects_data_leaves_content_unchanged(self):
+        content = "## PROJECTS\n- Something\n\n## CERTIFICATIONS\n- x\n"
+        self.assertEqual(_force_correct_projects(content, []), content)
+
+    def test_omits_optional_lines_when_data_is_missing(self):
+        projects = [{"name": "Small Project", "description": "Does a thing."}]
+        content = "## PROJECTS\n- old\n\n## CERTIFICATIONS\n- x\n"
+        result = _force_correct_projects(content, projects)
+        self.assertIn("- **Small Project** — Does a thing.", result)
+        self.assertNotIn("Role:", result)
+        self.assertNotIn("URL:", result)
 
 
 if __name__ == "__main__":

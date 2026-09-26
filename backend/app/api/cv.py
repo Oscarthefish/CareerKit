@@ -46,6 +46,75 @@ def _force_correct_certifications(content: str, certifications: list[dict]) -> s
     return pattern.sub(lambda m: m.group(1) + correct_block + "\n", content, count=1)
 
 
+_DOMAIN_SKILL_NAMES = {
+    "network security", "identity & access security", "email security",
+    "osint & threat research", "digital forensics fundamentals",
+}
+
+
+def _force_correct_ops_skills_line(content: str, skills: list[dict]) -> str:
+    """Safety net: cv_generation.md says this line's "content must be
+    specific, real, and drawn from the candidate's actual data" - but the
+    model has been observed inflating it into a long run of invented,
+    paraphrased fragments ("Timeline reconstruction", "Senior technical
+    judgement", "Gap analysis") instead of the candidate's actual named
+    skills. Force it to the real "technical"/"process" category skill names
+    (excluding the ones that belong under Security Domains instead), the same
+    way Platforms & Tools is force-corrected below."""
+    ops_names = [
+        s.get("name") for s in skills
+        if s.get("category") in ("technical", "process")
+        and s.get("name")
+        and s["name"].strip().lower() not in _DOMAIN_SKILL_NAMES
+    ]
+    if not ops_names:
+        return content
+    correct_line = "**Security Operations & Incident Response:** " + ", ".join(ops_names)
+    pattern = re.compile(r"^\*\*Security Operations & Incident Response:\*\*.*$", re.MULTILINE)
+    if not pattern.search(content):
+        return content
+    return pattern.sub(lambda m: correct_line, content, count=1)
+
+
+def _force_correct_projects(content: str, projects: list[dict]) -> str:
+    """Safety net: cv_generation.md asks for each project as "- **Name** —
+    ...", with its url included and role/technologies mentioned where useful
+    - but the model has been observed dropping the bold name and the
+    labelled role/technologies/outcomes/url lines on some regenerations.
+    Rebuild the section deterministically from the profile's project data
+    instead of trusting free-text retyping."""
+    if not projects:
+        return content
+    blocks = []
+    for p in projects:
+        name = (p.get("name") or "").strip()
+        if not name:
+            continue
+        description = (p.get("description") or "").strip()
+        block = f"- **{name}**" + (f" — {description}" if description else "")
+        extra_lines = []
+        role = (p.get("role") or "").strip()
+        if role:
+            extra_lines.append(f"  Role: {role}")
+        technologies = [t for t in (p.get("technologies") or []) if t]
+        if technologies:
+            extra_lines.append(f"  Technologies: {', '.join(technologies)}")
+        outcomes = (p.get("outcomes") or "").strip()
+        if outcomes:
+            extra_lines.append(f"  Outcomes: {outcomes}")
+        url = (p.get("url") or "").strip()
+        if url:
+            extra_lines.append(f"  URL: {url}")
+        blocks.append("\n".join([block] + extra_lines))
+    if not blocks:
+        return content
+    correct_block = "\n".join(blocks)
+    pattern = re.compile(r"(^## PROJECTS\s*\n)(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
+    if not pattern.search(content):
+        return content
+    return pattern.sub(lambda m: m.group(1) + correct_block + "\n", content, count=1)
+
+
 def _merge_key_skills_continuations(content: str) -> str:
     """Safety net: cv_generation.md is explicit that Platforms & Tools,
     Security Domains and Leadership & People must all stay under the single
@@ -377,6 +446,7 @@ async def generate_cv(mode: str = "cv_safe", db: Session = Depends(get_db)):
     content = re.sub(r"\n[ \t]*-[ \t]*\n", "\n", content)
     content = _strip_trailing_line_commas(content)
     content = _merge_key_skills_continuations(content)
+    content = _force_correct_ops_skills_line(content, profile.get("skills", []))
 
     # Safety net: Platforms & Tools is meant to be copied verbatim from
     # platforms_and_tools_display (built deterministically so it can't
@@ -415,20 +485,7 @@ async def generate_cv(mode: str = "cv_safe", db: Session = Depends(get_db)):
                 heading_pattern = re.compile(r"^## KEY SKILLS\s*$", re.MULTILINE)
                 content = heading_pattern.sub(lambda m: m.group(0) + "\n" + correct_block, content, count=1)
 
-    # Safety net: a project's URL occasionally gets dropped even though it was
-    # right there in the data. Append it back onto that project's line if the
-    # URL string isn't present anywhere in the output.
-    for p in profile.get("projects", []):
-        url = p.get("url")
-        name = p.get("name")
-        if not url or not name or url in content:
-            continue
-        name_line_pattern = re.compile(
-            rf"^(- \**{re.escape(name)}\**.*$)", re.MULTILINE
-        )
-        if name_line_pattern.search(content):
-            content = name_line_pattern.sub(lambda m: m.group(1) + f" URL: {url}", content, count=1)
-
+    content = _force_correct_projects(content, profile.get("projects", []))
     content = _ensure_all_roles_present(content, profile.get("work_experience", []))
     content = _enrich_achievement_bullets(content, profile.get("achievements", []))
     content = _ensure_all_achievements_present(content, profile.get("achievements", []))
