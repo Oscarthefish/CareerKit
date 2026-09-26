@@ -560,118 +560,39 @@ function TabJobMatch({ app, refresh, appId }: { app: JobApplication; refresh: ()
       </div>
 
       {/* Custom CV creation + rescan */}
-      <CustomCvPanel app={app} result={result} appId={appId} refresh={refresh} />
+      <CustomCvPanel app={app} appId={appId} refresh={refresh} />
     </div>
   )
 }
 
 function CustomCvPanel({
-  app, result, appId, refresh,
-}: { app: JobApplication; result: JobMatchResult; appId: number; refresh: () => void }) {
-  const allFixes = [...result.priority_fixes.top, ...result.priority_fixes.more]
-  const safeFixes = allFixes.filter((f) => f.tier === 'SAFE_OPTIMISATION')
-  const lockedFixes = allFixes.filter((f) => f.tier !== 'SAFE_OPTIMISATION')
-
-  const [selected, setSelected] = useState<Set<string>>(new Set(safeFixes.map((f) => f.requirement)))
-  const [step, setStep] = useState<'select' | 'review'>('select')
+  app, appId, refresh,
+}: { app: JobApplication; appId: number; refresh: () => void }) {
   const [cvResult, setCvResult] = useState<CustomCvResult | null>(
-    app.custom_cv ? { custom_cv: app.custom_cv, applied_fixes: app.custom_cv_fixes_applied || [] } as CustomCvResult : null
+    app.custom_cv
+      ? { custom_cv: app.custom_cv, selection_summary: app.custom_cv_fixes_applied?.[0] || '' } as CustomCvResult
+      : null
   )
 
-  const toggle = (name: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      next.has(name) ? next.delete(name) : next.add(name)
-      return next
-    })
-  }
-
   const handleGenerate = async () => {
-    const data: any = await generateCustomCV(appId, Array.from(selected))
+    const data: any = await generateCustomCV(appId)
     setCvResult(data)
     refresh()
-  }
-
-  if (safeFixes.length === 0 && !cvResult) {
-    return (
-      <div className="card p-5">
-        <h3 className="font-semibold text-gray-900 mb-2 text-sm">Create Custom CV</h3>
-        <p className="text-xs text-gray-400">
-          No changes are currently backed by evidence in your Master CV — nothing safe to apply yet.
-        </p>
-      </div>
-    )
   }
 
   return (
     <div className="card p-5">
       <h3 className="font-semibold text-gray-900 mb-1 text-sm">Create Custom CV</h3>
       <p className="text-xs text-gray-400 mb-4">
-        Applies only the changes below to a new copy of your Master CV. Changes still needing evidence are
-        shown but can't be selected — add the evidence to your Master CV first.
+        Generates a CV tailored to this vacancy — selecting and prioritising your strongest real evidence for
+        this role, not just copying your Master CV. Nothing unsupported by your Master CV is ever added.
       </p>
 
-      {step === 'select' && (
-        <>
-          <div className="space-y-2 mb-4">
-            {safeFixes.map((f) => (
-              <label key={f.requirement} className="flex items-start gap-2 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={selected.has(f.requirement)}
-                  onChange={() => toggle(f.requirement)}
-                  className="mt-1"
-                />
-                <div>
-                  <span className="font-medium text-gray-900">{f.requirement}</span>
-                  <p className="text-xs text-gray-500">{f.message}</p>
-                </div>
-              </label>
-            ))}
-            {lockedFixes.map((f) => (
-              <div key={f.requirement} className="flex items-start gap-2 text-sm opacity-50">
-                <input type="checkbox" checked={false} disabled className="mt-1" />
-                <div>
-                  <span className="font-medium text-gray-900">{f.requirement}</span>
-                  <span className={`ml-2 ${TIER_BADGE[f.tier]}`}>{TIER_LABEL[f.tier]}</span>
-                  <p className="text-xs text-gray-500">{f.message}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-500">{selected.size} change{selected.size === 1 ? '' : 's'} selected</span>
-            <button
-              onClick={() => setStep('review')}
-              disabled={selected.size === 0}
-              className="btn-secondary btn-sm ml-auto"
-            >
-              Review Selected Changes
-            </button>
-          </div>
-        </>
-      )}
-
-      {step === 'review' && (
-        <>
-          <div className="space-y-2 mb-4">
-            {safeFixes.filter((f) => selected.has(f.requirement)).map((f) => (
-              <div key={f.requirement} className="p-3 bg-gray-50 rounded-lg text-sm">
-                <span className="font-medium text-gray-900">{f.requirement}</span>
-                <p className="text-xs text-gray-500 mt-0.5">{f.message}</p>
-              </div>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => setStep('select')} className="btn-ghost btn-sm">Back</button>
-            <AIButton
-              label={`Generate Custom CV (${selected.size} change${selected.size === 1 ? '' : 's'})`}
-              loadingLabel="Generating and rescanning..."
-              onClick={handleGenerate}
-            />
-          </div>
-        </>
-      )}
+      <AIButton
+        label={cvResult ? 'Regenerate Custom CV' : 'Generate Custom CV'}
+        loadingLabel="Selecting evidence and generating..."
+        onClick={handleGenerate}
+      />
 
       {cvResult && (cvResult.before || cvResult.after) && (
         <div className="mt-6 pt-6 border-t border-gray-100">
@@ -682,13 +603,13 @@ function CustomCvPanel({
             <RescanScore label="Recruiter Readiness" before={cvResult.before?.recruiter_readiness} after={cvResult.after?.recruiter_readiness} />
           </div>
           <p className="text-xs text-gray-400 mb-4">
-            Job Match measures evidence in your structured Master CV data, so it typically won't move from
-            wording changes alone — that's intentional, not a bug: CareerKit won't inflate this score just
-            because the CV reads better. ATS Compatibility and Recruiter Readiness are text-driven and
-            reflect the real improvement above.
+            Job Match measures evidence in your structured profile data, so it typically won't move from a
+            tailored CV alone — that's intentional, not a bug: CareerKit won't inflate this score just because
+            the CV reads better. ATS Compatibility and Recruiter Readiness are text-driven and reflect the real
+            improvement above.
           </p>
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-gray-400">Applied: {cvResult.applied_fixes.join(', ')}</p>
+            <p className="text-xs text-gray-400">{cvResult.selection_summary}</p>
             <div className="flex gap-2">
               <a href={exportApplication(appId, 'md', 'custom-cv')} download className="btn-ghost btn-sm">MD</a>
               <a href={exportApplication(appId, 'docx', 'custom-cv')} download className="btn-ghost btn-sm">DOCX</a>

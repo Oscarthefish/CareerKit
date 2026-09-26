@@ -1,10 +1,12 @@
 import unittest
 
 from app.services.matching.evidence import (
+    _MAX_REQUIREMENTS_PER_LLM_CALL,
     _make_structure_validator,
     _profile_item_names,
     _sanitize_evidence,
     match_evidence,
+    match_evidence_llm,
     match_requirement_deterministic,
 )
 
@@ -137,6 +139,29 @@ class SanitizeEvidenceTests(unittest.TestCase):
         result = _sanitize_evidence([entry], self.known)
         self.assertEqual(result[0], entry)
 
+    def test_possible_with_no_source_passes_through_unchanged(self):
+        # POSSIBLE is allowed to cite nothing at all (a vague/indirect signal) -
+        # only a GIVEN citation needs to be real.
+        entry = {"requirement": "X", "evidence_level": "POSSIBLE", "sources": [], "rationale": "vague signal"}
+        result = _sanitize_evidence([entry], self.known)
+        self.assertEqual(result[0], entry)
+
+    def test_possible_with_a_fabricated_or_garbage_citation_is_downgraded(self):
+        # Observed in practice: a local model citing a raw internal-looking
+        # reference like "achievements/5" instead of a real item name.
+        result = _sanitize_evidence([{
+            "requirement": "X", "evidence_level": "POSSIBLE", "sources": ["achievements/5"],
+        }], self.known)
+        self.assertEqual(result[0]["evidence_level"], "NOT_FOUND")
+        self.assertEqual(result[0]["sources"], [])
+
+    def test_possible_with_a_real_citation_is_kept(self):
+        result = _sanitize_evidence([{
+            "requirement": "X", "evidence_level": "POSSIBLE",
+            "sources": ["Achievement: Led ransomware response"],
+        }], self.known)
+        self.assertEqual(result[0]["evidence_level"], "POSSIBLE")
+
 
 class _StubProvider:
     """A minimal AIProvider stand-in so match_evidence's orchestration can be
@@ -171,6 +196,69 @@ class MatchEvidenceOrchestrationTests(unittest.IsolatedAsyncioTestCase):
         results = await match_evidence(provider, requirements, PROFILE, PROFILE)
         self.assertEqual(results[0]["evidence_level"], "NOT_FOUND")
         self.assertEqual(results[0]["confidence"], 0.9)
+
+
+class MatchEvidenceLlmChunkingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_splits_a_large_unresolved_list_into_multiple_calls(self):
+        calls: list[set] = []
+
+        class Provider:
+            async def generate_json(self, prompt, system=None, required_keys=None, validate=None):
+                # Reconstruct which chunk this call covers from the requirement
+                # names actually embedded in the prompt.
+                chunk = [n for n in unresolved if n in prompt]
+                calls.append(set(chunk))
+                return {"evidence": [
+                    {"requirement": n, "evidence_level": "NOT_FOUND", "sources": [], "confidence": 0.0}
+                    for n in chunk
+                ]}
+
+        unresolved = [f"Requirement {i}" for i in range(_MAX_REQUIREMENTS_PER_LLM_CALL * 2 + 1)]
+        result = await match_evidence_llm(Provider(), unresolved, PROFILE, PROFILE)
+
+        self.assertEqual(len(calls), 3)  # 6 + 6 + 1, with the default batch size
+        self.assertEqual(len(result), len(unresolved))
+
+    async def test_one_failing_chunk_does_not_cost_other_chunks_their_results(self):
+        class Provider:
+            def __init__(self):
+                self.call_count = 0
+
+            async def generate_json(self, prompt, system=None, required_keys=None, validate=None):
+                self.call_count += 1
+                if self.call_count == 1:
+                    raise ValueError("stub: this chunk's model output was never usable")
+                chunk = [n for n in unresolved if n in prompt]
+                return {"evidence": [
+                    {
+                        "requirement": n, "evidence_level": "EXPLICIT", "confidence": 0.9,
+                        "sources": ["Achievement: Led ransomware response"],
+                    }
+                    for n in chunk
+                ]}
+
+        unresolved = [f"Requirement {i}" for i in range(_MAX_REQUIREMENTS_PER_LLM_CALL + 1)]
+        result = await match_evidence_llm(Provider(), unresolved, PROFILE, PROFILE)
+
+        # First chunk (the failing one) contributes nothing - its requirements
+        # simply aren't in the result (callers treat "missing" as NOT_FOUND).
+        first_chunk_names = set(unresolved[:_MAX_REQUIREMENTS_PER_LLM_CALL])
+        second_chunk_names = set(unresolved[_MAX_REQUIREMENTS_PER_LLM_CALL:])
+        self.assertFalse(first_chunk_names & set(result.keys()))
+        self.assertTrue(second_chunk_names <= set(result.keys()))
+        for name in second_chunk_names:
+            self.assertEqual(result[name]["evidence_level"], "EXPLICIT")
+
+    async def test_small_list_makes_a_single_call(self):
+        calls = []
+
+        class Provider:
+            async def generate_json(self, prompt, system=None, required_keys=None, validate=None):
+                calls.append(1)
+                return {"evidence": [{"requirement": "Only one", "evidence_level": "NOT_FOUND", "sources": []}]}
+
+        await match_evidence_llm(Provider(), ["Only one"], PROFILE, PROFILE)
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

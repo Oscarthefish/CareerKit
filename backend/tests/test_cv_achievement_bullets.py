@@ -7,11 +7,17 @@ from app.api.cv import (
     _ensure_all_achievements_present,
     _ensure_all_roles_present,
     _force_correct_certifications,
+    _force_correct_domains_line,
+    _force_correct_leadership_line,
     _force_correct_ops_skills_line,
     _force_correct_projects,
     _format_role_date,
     _merge_key_skills_continuations,
+    _remove_fabricated_role_headings,
+    _strip_bullets_for_dataless_roles,
+    _strip_empty_key_skills_lines,
     _strip_trailing_line_commas,
+    _strip_unbolded_key_skills_duplicate_lines,
 )
 
 CV_TEMPLATE = """# Alex Example
@@ -412,15 +418,20 @@ class ForceCorrectOpsSkillsLineTests(unittest.TestCase):
         self.assertIn("Incident Response", result)
         self.assertNotIn("Email Security", result)
 
-    def test_no_matching_line_leaves_content_unchanged(self):
-        content = "## KEY SKILLS\n**Security Domains:** Network Security\n"
+    def test_inserts_the_line_when_missing_entirely_but_real_data_exists(self):
+        content = "## KEY SKILLS\n**Security Domains:** Network Security\n\n## PROFESSIONAL EXPERIENCE\n"
+        result = _force_correct_ops_skills_line(content, [{"name": "Incident Response", "category": "technical"}])
+        self.assertIn("**Security Operations & Incident Response:** Incident Response", result)
+
+    def test_no_key_skills_section_leaves_content_unchanged(self):
+        content = "# Alex Example\n\n## PROFESSIONAL EXPERIENCE\n"
         result = _force_correct_ops_skills_line(content, [{"name": "Incident Response", "category": "technical"}])
         self.assertEqual(result, content)
 
-    def test_no_ops_category_skills_leaves_content_unchanged(self):
+    def test_removes_the_line_when_no_ops_category_skills_exist(self):
         content = "**Security Operations & Incident Response:** old content\n"
         result = _force_correct_ops_skills_line(content, [{"name": "Team Leadership", "category": "soft"}])
-        self.assertEqual(result, content)
+        self.assertNotIn("Security Operations & Incident Response", result)
 
 
 class ForceCorrectProjectsTests(unittest.TestCase):
@@ -458,6 +469,158 @@ class ForceCorrectProjectsTests(unittest.TestCase):
         self.assertIn("- **Small Project** — Does a thing.", result)
         self.assertNotIn("Role:", result)
         self.assertNotIn("URL:", result)
+
+
+class StripEmptyKeySkillsLinesTests(unittest.TestCase):
+    def test_strips_a_dangling_empty_leadership_line(self):
+        content = "## KEY SKILLS\n**Security Operations & Incident Response:** Incident Response\n**Leadership & People:** \n\n## PROFESSIONAL EXPERIENCE\n"
+        result = _strip_empty_key_skills_lines(content)
+        self.assertNotIn("Leadership & People", result)
+        self.assertIn("Security Operations & Incident Response", result)
+
+    def test_leaves_a_non_empty_line_untouched(self):
+        content = "**Leadership & People:** Team Leadership, Mentoring\n"
+        self.assertEqual(_strip_empty_key_skills_lines(content), content)
+
+    def test_never_touches_platforms_and_tools_heading(self):
+        # Platforms & Tools legitimately has nothing on its own line - its
+        # content lives on the lines directly after.
+        content = "**Platforms & Tools:**\nSIEM: Splunk Enterprise Security\n"
+        self.assertEqual(_strip_empty_key_skills_lines(content), content)
+
+    def test_strips_multiple_empty_lines(self):
+        content = "**Security Domains:** \n**Leadership & People:**\n## PROFESSIONAL EXPERIENCE\n"
+        result = _strip_empty_key_skills_lines(content)
+        self.assertEqual(result, "## PROFESSIONAL EXPERIENCE\n")
+
+
+class RemoveFabricatedRoleHeadingsTests(unittest.TestCase):
+    def test_removes_a_role_paired_with_the_wrong_employer(self):
+        work_experience = [
+            {"role": "IT Team Leader", "company": "Momentum Worldwide", "key_responsibilities": []},
+        ]
+        content = (
+            "## PROFESSIONAL EXPERIENCE\n\n"
+            "### IT Team Leader | The Workshop | Nov 2008 - Sep 2011\n"
+            "- Team leadership\n\n"
+            "### IT Team Leader | Momentum Worldwide | Nov 2008 - Sep 2011\n"
+            "- Team leadership\n\n"
+            "## SELECTED ACHIEVEMENTS\n- x\n"
+        )
+        result = _remove_fabricated_role_headings(content, work_experience)
+        self.assertNotIn("The Workshop", result)
+        self.assertIn("IT Team Leader | Momentum Worldwide", result)
+        self.assertEqual(result.count("### IT Team Leader"), 1)
+
+    def test_keeps_a_role_title_legitimately_repeated_at_a_different_real_company(self):
+        work_experience = [
+            {"role": "Cyber Security Analyst", "company": "timbre Digital", "key_responsibilities": []},
+            {"role": "Cyber Security Analyst", "company": "The Workshop", "key_responsibilities": []},
+        ]
+        content = (
+            "## PROFESSIONAL EXPERIENCE\n\n"
+            "### Cyber Security Analyst | timbre Digital | Nov 2016 - Jan 2018\n- a\n\n"
+            "### Cyber Security Analyst | The Workshop | Feb 2016 - Nov 2016\n- b\n\n"
+            "## SELECTED ACHIEVEMENTS\n- x\n"
+        )
+        result = _remove_fabricated_role_headings(content, work_experience)
+        self.assertIn("Cyber Security Analyst | timbre Digital", result)
+        self.assertIn("Cyber Security Analyst | The Workshop", result)
+
+    def test_no_professional_experience_section_does_not_crash(self):
+        content = "# Alex Example\n\n## KEY SKILLS\n- SIEM\n"
+        result = _remove_fabricated_role_headings(content, [{"role": "X", "company": "Y"}])
+        self.assertEqual(result, content)
+
+
+class StripBulletsForDatalessRolesTests(unittest.TestCase):
+    def test_strips_an_invented_bullet_under_a_role_with_no_real_data(self):
+        work_experience = [
+            {"role": "Information Technology Desktop Support", "company": "Interpublic Group",
+             "description": "", "key_responsibilities": []},
+        ]
+        content = (
+            "## PROFESSIONAL EXPERIENCE\n\n"
+            "### Information Technology Desktop Support | Interpublic Group | Jul 2007 - Nov 2008\n"
+            "- Team leadership\n\n"
+            "## SELECTED ACHIEVEMENTS\n- x\n"
+        )
+        result = _strip_bullets_for_dataless_roles(content, work_experience)
+        self.assertNotIn("Team leadership", result)
+        self.assertIn("### Information Technology Desktop Support | Interpublic Group", result)
+
+    def test_leaves_a_role_with_real_data_untouched(self):
+        work_experience = [
+            {"role": "X", "company": "Y", "description": "", "key_responsibilities": ["Did a real thing"]},
+        ]
+        content = "## PROFESSIONAL EXPERIENCE\n\n### X | Y | Jan 2020 - Present\n- Did a real thing\n\n## SELECTED ACHIEVEMENTS\n- x\n"
+        result = _strip_bullets_for_dataless_roles(content, work_experience)
+        self.assertEqual(result, content)
+
+    def test_no_professional_experience_section_does_not_crash(self):
+        content = "# Alex Example\n\n## KEY SKILLS\n- SIEM\n"
+        result = _strip_bullets_for_dataless_roles(content, [{"role": "X", "company": "Y"}])
+        self.assertEqual(result, content)
+
+
+class ForceCorrectDomainsAndLeadershipLinesTests(unittest.TestCase):
+    def test_inserts_domains_line_when_missing_entirely(self):
+        skills = [{"name": "Network Security", "category": "technical"}, {"name": "Email Security", "category": "technical"}]
+        content = "## KEY SKILLS\n**Security Operations & Incident Response:** Incident Response\n\n## PROFESSIONAL EXPERIENCE\n- x\n"
+        result = _force_correct_domains_line(content, skills)
+        self.assertIn("**Security Domains:** Network Security, Email Security", result)
+
+    def test_inserts_leadership_line_when_missing_entirely(self):
+        skills = [{"name": "Team Leadership", "category": "soft"}, {"name": "Mentoring & Coaching", "category": "soft"}]
+        content = "## KEY SKILLS\n**Security Operations & Incident Response:** Incident Response\n\n## PROFESSIONAL EXPERIENCE\n- x\n"
+        result = _force_correct_leadership_line(content, skills)
+        self.assertIn("**Leadership & People:** Team Leadership, Mentoring & Coaching", result)
+
+    def test_corrects_an_existing_wrong_leadership_line(self):
+        skills = [{"name": "Team Leadership", "category": "soft"}]
+        content = "**Leadership & People:** made-up filler text\n"
+        result = _force_correct_leadership_line(content, skills)
+        self.assertIn("**Leadership & People:** Team Leadership", result)
+        self.assertNotIn("made-up filler text", result)
+
+    def test_removes_the_line_when_nothing_real_to_show(self):
+        content = "**Leadership & People:** made-up filler text\n## PROFESSIONAL EXPERIENCE\n"
+        result = _force_correct_leadership_line(content, [])
+        self.assertNotIn("Leadership & People", result)
+
+    def test_domains_excludes_non_domain_technical_skills(self):
+        skills = [
+            {"name": "Network Security", "category": "technical"},
+            {"name": "Incident Response", "category": "technical"},  # belongs to the ops line, not domains
+        ]
+        content = "## KEY SKILLS\n**Security Operations & Incident Response:** Incident Response\n\n## PROFESSIONAL EXPERIENCE\n"
+        result = _force_correct_domains_line(content, skills)
+        domains_line = [l for l in result.splitlines() if l.startswith("**Security Domains:**")][0]
+        self.assertIn("Network Security", domains_line)
+        self.assertNotIn("Incident Response", domains_line)
+
+
+class StripUnboldedKeySkillsDuplicateLinesTests(unittest.TestCase):
+    def test_strips_an_unbolded_duplicate_that_precedes_the_correct_bold_line(self):
+        content = (
+            "## KEY SKILLS\n\n"
+            "Security Operations & Incident Response: Splunk, Incident Response\n\n"
+            "Leadership & People: Team Leadership\n"
+            "**Security Operations & Incident Response:** Incident Response\n"
+            "**Leadership & People:** Team Leadership\n"
+        )
+        result = _strip_unbolded_key_skills_duplicate_lines(content)
+        self.assertNotIn("Security Operations & Incident Response: Splunk", result)
+        self.assertIn("**Security Operations & Incident Response:** Incident Response", result)
+        self.assertIn("**Leadership & People:** Team Leadership", result)
+
+    def test_never_touches_the_bolded_line(self):
+        content = "**Security Operations & Incident Response:** Incident Response\n"
+        self.assertEqual(_strip_unbolded_key_skills_duplicate_lines(content), content)
+
+    def test_no_duplicate_present_leaves_content_unchanged(self):
+        content = "## KEY SKILLS\n\n**Leadership & People:** Team Leadership\n\n## PROFESSIONAL EXPERIENCE\n"
+        self.assertEqual(_strip_unbolded_key_skills_duplicate_lines(content), content)
 
 
 if __name__ == "__main__":
