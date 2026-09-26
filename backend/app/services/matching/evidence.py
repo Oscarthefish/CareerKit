@@ -344,3 +344,42 @@ async def match_evidence(provider, requirements: list[dict], profile: dict, comp
         }
         out.append({**r, **evidence})
     return out
+
+
+_PLACEHOLDER_EVIDENCE_VALUES = {"none", "n/a", "na", "-", "unspecified", "not specified", "unknown", "tbc", "tbd"}
+
+
+def _evidence_is_real(evidence: str, known_names: set[str]) -> bool:
+    low = (evidence or "").strip().lower()
+    if not low or low in _PLACEHOLDER_EVIDENCE_VALUES:
+        return False
+    return _source_is_known(low, known_names)
+
+
+def sanitize_scorecard(scorecard: dict, profile: dict) -> dict:
+    """Safety net for the (older, separate) Match Scorecard feature -
+    match_scorecard.md instructs the model to cite a specific real profile
+    item as "evidence" for every strong match, and to never claim a strong
+    match without one, but - unlike the Job Match evidence engine above -
+    nothing enforces that rule in code. Observed in practice: the model
+    listing a skill under "strong_matches" with the evidence field literally
+    set to the string "None". Move any "strong_matches" entry whose evidence
+    is missing, a placeholder, or doesn't correspond to a real profile item
+    into "do_not_claim" instead, rather than let an unverifiable "strong
+    match" reach the user - the same downgrade-rather-than-discard principle
+    _sanitize_evidence uses above, applied to this older feature's output."""
+    known_names = _profile_item_names(profile)
+    result = dict(scorecard)
+    do_not_claim = list(result.get("do_not_claim") or [])
+
+    kept_strong = []
+    for m in result.get("strong_matches") or []:
+        evidence = m.get("evidence") if isinstance(m, dict) else None
+        if isinstance(m, dict) and _evidence_is_real(evidence, known_names):
+            kept_strong.append(m)
+        elif isinstance(m, dict) and m.get("skill"):
+            do_not_claim.append(m["skill"])
+
+    result["strong_matches"] = kept_strong
+    result["do_not_claim"] = do_not_claim
+    return result
