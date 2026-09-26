@@ -74,11 +74,26 @@ def _serialize(app: JobApplication) -> dict:
     }
 
 
+def _job_match_summary(job_match_result_json: Optional[str]) -> tuple[Optional[int], Optional[str]]:
+    """(score, band) for the applications list view - cheap to compute
+    (parsing already-stored JSON, no LLM call) so every row can show its Job
+    Match at a glance without opening the application."""
+    if not job_match_result_json:
+        return None, None
+    try:
+        job_match = json.loads(job_match_result_json).get("job_match") or {}
+    except (json.JSONDecodeError, AttributeError):
+        return None, None
+    return job_match.get("overall"), job_match.get("band")
+
+
 @router.get("")
 def list_applications(db: Session = Depends(get_db)):
     rows = db.query(JobApplication).order_by(JobApplication.id.desc()).all()
-    return [
-        {
+    result = []
+    for r in rows:
+        job_match_score, job_match_band = _job_match_summary(r.job_match_result)
+        result.append({
             "id": r.id,
             "company": r.company,
             "role": r.role,
@@ -93,9 +108,10 @@ def list_applications(db: Session = Depends(get_db)):
             "has_custom_cv": r.custom_cv is not None,
             "has_cover_letter": r.cover_letter is not None,
             "has_interview_prep": r.interview_prep is not None,
-        }
-        for r in rows
-    ]
+            "job_match_score": job_match_score,
+            "job_match_band": job_match_band,
+        })
+    return result
 
 
 class ApplicationCreate(BaseModel):
