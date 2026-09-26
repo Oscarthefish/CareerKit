@@ -16,6 +16,41 @@ REQUIREMENT_TYPES = (
 )
 IMPORTANCE_LEVELS = ("critical", "important", "desirable")
 
+# The model occasionally invents a plausible-sounding type that isn't in the
+# enum instead of picking the closest real one (observed in practice:
+# "experience" for a tenure requirement like "3+ years SOC experience", which
+# the prompt uses as its own worked example without ever saying which type it
+# is). Rather than let a single bad enum value fail validation twice and
+# raise - discarding the whole requirements list over one field - normalise
+# known near-misses to the closest real type first.
+_TYPE_ALIASES = {
+    "experience": "hard_skill",
+    "years_experience": "hard_skill",
+    "seniority": "hard_skill",
+    "skill": "hard_skill",
+    "technical_skill": "hard_skill",
+    "platform": "tool",
+    "technology": "tool",
+    "process": "methodology",
+    "duty": "responsibility",
+    "task": "responsibility",
+    "cert": "certification",
+    "qualification": "certification",
+    "domain": "industry",
+    "sector": "industry",
+    "soft_skills": "soft_skill",
+    "communication": "soft_skill",
+}
+
+
+def _normalize_type(raw_type) -> Optional[str]:
+    if not isinstance(raw_type, str):
+        return None
+    key = raw_type.strip().lower().replace(" ", "_").replace("-", "_")
+    if key in REQUIREMENT_TYPES:
+        return key
+    return _TYPE_ALIASES.get(key)
+
 
 def _validate_requirements(parsed: dict) -> Optional[str]:
     items = parsed.get("requirements")
@@ -30,8 +65,10 @@ def _validate_requirements(parsed: dict) -> Optional[str]:
         seen_names.add(r["name"].lower())
         if r.get("importance") not in IMPORTANCE_LEVELS:
             return f"invalid importance {r.get('importance')!r} for {r['name']!r} (must be one of {IMPORTANCE_LEVELS})"
-        if r.get("type") not in REQUIREMENT_TYPES:
+        normalized_type = _normalize_type(r.get("type"))
+        if normalized_type is None:
             return f"invalid type {r.get('type')!r} for {r['name']!r} (must be one of {REQUIREMENT_TYPES})"
+        r["type"] = normalized_type  # mutates the dict generate_json returns, so the fix sticks
     return None
 
 

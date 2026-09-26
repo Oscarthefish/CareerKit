@@ -15,6 +15,7 @@ List every significant requirement mentioned or clearly implied by this role: ha
 For each requirement, classify:
 
 - "type": one of hard_skill | tool | methodology | responsibility | certification | industry | soft_skill
+  - A tenure/seniority requirement (e.g. "3+ years SOC experience", "5+ years in a similar role") is "hard_skill" - there is no separate "experience" type.
 - "importance": one of critical | important | desirable
 
 Classify importance from MEANING, not frequency:

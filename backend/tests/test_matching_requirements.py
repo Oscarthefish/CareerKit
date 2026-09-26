@@ -1,6 +1,6 @@
 import unittest
 
-from app.services.matching.requirements import _validate_requirements, bucket_by_importance
+from app.services.matching.requirements import _normalize_type, _validate_requirements, bucket_by_importance
 
 
 class RequirementValidationTests(unittest.TestCase):
@@ -11,12 +11,29 @@ class RequirementValidationTests(unittest.TestCase):
         self.assertIsNotNone(error)
         self.assertIn("importance", error)
 
-    def test_rejects_invalid_type(self):
+    def test_rejects_a_genuinely_unrecognisable_type(self):
         error = _validate_requirements({"requirements": [
-            {"name": "Splunk", "type": "platform", "importance": "critical"},
+            {"name": "Splunk", "type": "banana", "importance": "critical"},
         ]})
         self.assertIsNotNone(error)
         self.assertIn("type", error)
+
+    def test_normalizes_a_known_near_miss_type_instead_of_rejecting(self):
+        # Observed in practice: the model classifies a tenure requirement
+        # like "3+ years SOC experience" as type "experience", which isn't in
+        # the enum - this used to fail validation (and, after a second failed
+        # retry, raise and surface as a 502 to the user) rather than being
+        # recoverable.
+        requirements = [{"name": "3+ years SOC experience", "type": "experience", "importance": "critical"}]
+        error = _validate_requirements({"requirements": requirements})
+        self.assertIsNone(error)
+        self.assertEqual(requirements[0]["type"], "hard_skill")  # normalized in place
+
+    def test_normalizes_platform_to_tool(self):
+        requirements = [{"name": "Splunk", "type": "platform", "importance": "critical"}]
+        error = _validate_requirements({"requirements": requirements})
+        self.assertIsNone(error)
+        self.assertEqual(requirements[0]["type"], "tool")
 
     def test_rejects_duplicate_names(self):
         error = _validate_requirements({"requirements": [
@@ -36,6 +53,22 @@ class RequirementValidationTests(unittest.TestCase):
             {"name": "Leadership", "type": "soft_skill", "importance": "desirable"},
         ]})
         self.assertIsNone(error)
+
+
+class NormalizeTypeTests(unittest.TestCase):
+    def test_passes_through_a_real_type_unchanged(self):
+        self.assertEqual(_normalize_type("hard_skill"), "hard_skill")
+
+    def test_normalizes_case_and_spacing_of_a_real_type(self):
+        self.assertEqual(_normalize_type("HARD_SKILL"), "hard_skill")
+        self.assertEqual(_normalize_type("Soft Skill"), "soft_skill")
+
+    def test_returns_none_for_unrecognised_type(self):
+        self.assertIsNone(_normalize_type("banana"))
+
+    def test_returns_none_for_non_string_input(self):
+        self.assertIsNone(_normalize_type(None))
+        self.assertIsNone(_normalize_type(123))
 
 
 class BucketByImportanceTests(unittest.TestCase):
