@@ -25,9 +25,11 @@ Evidence levels (the "Master CV Evidence Model"):
                  have this experience" - callers must preserve that framing.
 """
 import json
+import re
 from typing import Optional
 
 from .synonyms import expand_terms
+from .tenure import match_tenure_requirement
 
 EVIDENCE_LEVELS = ("EXPLICIT", "INFERRED", "POSSIBLE", "NOT_FOUND")
 
@@ -50,6 +52,8 @@ def _profile_haystack(profile: dict) -> list[tuple[str, str]]:
     for e in profile.get("work_experience", []):
         role, company = e.get("role"), e.get("company")
         base = f"{role} at {company}" if role and company else (role or company or "a former role")
+        if role:
+            out.append((role.lower(), f"Work experience: {base} (job title)"))
         for tech in e.get("technologies", []) or []:
             if tech:
                 out.append((tech.lower(), f"Work experience: {base} (technology: {tech})"))
@@ -134,6 +138,10 @@ def _search(term_variants: set[str], haystack: list[tuple[str, str]]) -> list[st
 def match_requirement_deterministic(requirement_name: str, profile: dict) -> Optional[dict]:
     """Returns an evidence dict if the exact-match/synonym pass resolves this
     requirement, or None if it's inconclusive and needs the LLM-assisted pass."""
+    tenure_match = match_tenure_requirement(requirement_name, profile.get("work_experience", []))
+    if tenure_match:
+        return tenure_match
+
     variants = expand_terms(requirement_name)
     if not variants:
         return None
@@ -159,11 +167,25 @@ def match_requirement_deterministic(requirement_name: str, profile: dict) -> Opt
     return None
 
 
+_MIN_FREE_TEXT_LEN = 20  # avoid short generic fragments causing loose accidental matches
+
+
 def _profile_item_names(profile: dict) -> set[str]:
-    """Every real, named profile item - used to verify an LLM-cited source
-    actually corresponds to something in the profile rather than a plausible-
-    sounding fabrication (the failure mode that produced an in-progress CISSP
-    being cited as evidence of an unrelated skill - see match_scorecard.md)."""
+    """Every real, named profile item, PLUS the actual free-text content of
+    responsibility/achievement/description fields - used to verify an LLM-
+    cited source actually corresponds to something in the profile rather than
+    a plausible-sounding fabrication (the failure mode that produced an in-
+    progress CISSP being cited as evidence of an unrelated skill - see
+    match_scorecard.md).
+
+    The free-text content matters because a citation doesn't always name a
+    short, distinct item - the model has also been observed embedding a full
+    key_responsibility/achievement sentence verbatim inside a longer, path-
+    like wrapper (e.g. "work_experience > 2022-01 > key_responsibilities >
+    Acted as a technical escalation..."). _resolve_path_citation handles a
+    clean index/field path with no embedded text; this handles the reverse -
+    messy wrappers around text that IS genuinely real, regardless of the
+    wrapper syntax, since the substring check below doesn't care about it."""
     names: set[str] = set()
     for s in profile.get("skills", []):
         if s.get("name"):
@@ -171,6 +193,9 @@ def _profile_item_names(profile: dict) -> set[str]:
     for a in profile.get("achievements", []):
         if a.get("title"):
             names.add(a["title"].lower())
+        for field in ("situation", "action", "result"):
+            if a.get(field) and len(a[field]) >= _MIN_FREE_TEXT_LEN:
+                names.add(a[field].lower())
     for t in profile.get("training", []):
         if t.get("title"):
             names.add(t["title"].lower())
@@ -185,6 +210,11 @@ def _profile_item_names(profile: dict) -> set[str]:
             names.add(e["company"].lower())
         if e.get("role"):
             names.add(e["role"].lower())
+        if e.get("description") and len(e["description"]) >= _MIN_FREE_TEXT_LEN:
+            names.add(e["description"].lower())
+        for resp in e.get("key_responsibilities", []) or []:
+            if resp and len(resp) >= _MIN_FREE_TEXT_LEN:
+                names.add(resp.lower())
     for ev in profile.get("evidence", []):
         if ev.get("title"):
             names.add(ev["title"].lower())
@@ -222,7 +252,43 @@ def _make_structure_validator(requirement_names: set[str]):
     return _validate
 
 
-def _sanitize_evidence(parsed_evidence: list[dict], known_names: set[str]) -> list[dict]:
+_PATH_CITATION_PATTERN = re.compile(r"^[A-Za-z_]\w*(?:[./:]\w+)*$")
+
+
+def _resolve_path_citation(source: str, data) -> Optional[str]:
+    """If `source` looks like a pointer into the profile structure rather
+    than free text - observed in practice: the model citing
+    "work_experience.0.role", "work_experience:0:key_responsibilities:14", or
+    "achievements/1/action" (dot, colon and slash all seen), or a bare field
+    name like "professional_summary" - resolve it to the real value. Returns
+    None if it doesn't look like a path, or the path doesn't resolve to real
+    string/number content. Successfully resolving a path is proof by
+    construction that the citation is real: there's no way to fabricate a
+    path that happens to resolve to content that genuinely exists in the
+    data, so a resolved citation is trusted outright rather than needing the
+    substring "known name" check below."""
+    if not source or not _PATH_CITATION_PATTERN.match(source.strip()):
+        return None
+    node = data
+    for seg in re.split(r"[./:]", source.strip()):
+        if isinstance(node, list):
+            if not seg.isdigit() or not (0 <= int(seg) < len(node)):
+                return None
+            node = node[int(seg)]
+        elif isinstance(node, dict):
+            if seg not in node:
+                return None
+            node = node[seg]
+        else:
+            return None
+    if isinstance(node, str) and node.strip():
+        return node.strip()
+    if isinstance(node, (int, float)) and not isinstance(node, bool):
+        return str(node)
+    return None
+
+
+def _sanitize_evidence(parsed_evidence: list[dict], known_names: set[str], compact_profile: Optional[dict] = None) -> list[dict]:
     """Per-entry citation check, run AFTER the structural validation above has
     already passed. An entry whose cited source doesn't correspond to a real
     profile item is downgraded to NOT_FOUND on its own - it never drags every
@@ -236,24 +302,43 @@ def _sanitize_evidence(parsed_evidence: list[dict], known_names: set[str]) -> li
     as real - otherwise a raw internal reference the model invented (observed
     in practice: a bare "achievements/5") passes straight through unchecked
     and downstream code (e.g. Custom CV evidence selection) sees a citation
-    that looks validated but isn't."""
+    that looks validated but isn't.
+
+    A path-shaped citation is resolved against compact_profile (the actual
+    data the model was shown, so its array indices line up) before the real-
+    name check - see _resolve_path_citation. The resolved, human-readable
+    text replaces the raw path in the stored sources, so what's displayed to
+    the user (and fed to Custom CV selection) is sensible content, never a
+    bare pointer like "work_experience:0:key_responsibilities:14"."""
     out = []
     for e in parsed_evidence:
         level = e.get("evidence_level")
-        sources = e.get("sources") or []
-        needs_check = level in ("EXPLICIT", "INFERRED") or (level == "POSSIBLE" and sources)
-        if needs_check and not any(_source_is_known(s, known_names) for s in sources):
+        raw_sources = e.get("sources") or []
+        resolved_sources = []
+        verified = False
+        for s in raw_sources:
+            resolved = _resolve_path_citation(s, compact_profile) if compact_profile is not None else None
+            if resolved is not None:
+                resolved_sources.append(resolved)
+                verified = True
+            else:
+                resolved_sources.append(s)
+                if _source_is_known(s, known_names):
+                    verified = True
+
+        needs_check = level in ("EXPLICIT", "INFERRED") or (level == "POSSIBLE" and raw_sources)
+        if needs_check and not verified:
             out.append({
                 **e,
                 "evidence_level": "NOT_FOUND",
                 "sources": [],
                 "rationale": (
-                    f"Downgraded from {level}: the model cited {sources!r}, which doesn't match "
+                    f"Downgraded from {level}: the model cited {raw_sources!r}, which doesn't match "
                     "any real item in the profile."
                 ),
             })
         else:
-            out.append(e)
+            out.append({**e, "sources": resolved_sources})
     return out
 
 
@@ -306,7 +391,7 @@ async def match_evidence_llm(provider, unresolved_names: list[str], profile: dic
             # chunk its legitimate classification.
             continue
 
-        sanitized = _sanitize_evidence(parsed.get("evidence", []), known_names)
+        sanitized = _sanitize_evidence(parsed.get("evidence", []), known_names, compact_profile)
         for e in sanitized:
             out[e["requirement"]] = {
                 "evidence_level": e["evidence_level"],

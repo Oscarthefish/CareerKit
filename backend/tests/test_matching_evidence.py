@@ -5,6 +5,7 @@ from app.services.matching.evidence import (
     _evidence_is_real,
     _make_structure_validator,
     _profile_item_names,
+    _resolve_path_citation,
     _sanitize_evidence,
     match_evidence,
     match_evidence_llm,
@@ -56,6 +57,24 @@ class DeterministicMatchTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["evidence_level"], "EXPLICIT")
 
+    def test_a_role_title_synonym_matches_a_real_held_title(self):
+        # "Information Security Analyst" isn't a title the candidate held,
+        # but it's synonymous with the real "Senior SOC Analyst" role title -
+        # requires both the synonym group entry and role titles being in the
+        # searchable haystack (see _profile_haystack).
+        result = match_requirement_deterministic("Information Security Analyst", PROFILE)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["evidence_level"], "EXPLICIT")
+        self.assertTrue(any("job title" in s for s in result["sources"]))
+
+    def test_tenure_requirement_is_matched_deterministically(self):
+        # PROFILE's one work_experience entry has no dates, so this specific
+        # fixture can't satisfy a tenure requirement - just confirm it's
+        # recognised as a tenure requirement (returns None, not a crash) and
+        # doesn't fall through to a false EXPLICIT via the skill/synonym path.
+        result = match_requirement_deterministic("5+ years SOC experience", PROFILE)
+        self.assertIsNone(result)
+
     def test_in_progress_cert_is_possible_not_explicit(self):
         result = match_requirement_deterministic(
             "Certified Information Systems Security Professional (CISSP)", PROFILE
@@ -66,6 +85,33 @@ class DeterministicMatchTests(unittest.TestCase):
     def test_nothing_supports_it_returns_none_for_llm_pass(self):
         result = match_requirement_deterministic("Microsoft Sentinel", PROFILE)
         self.assertIsNone(result)
+
+
+class ProfileItemNamesFreeTextTests(unittest.TestCase):
+    """_profile_item_names now includes free-text field content (not just
+    short names) so a citation that embeds a real sentence verbatim inside an
+    otherwise messy/path-like wrapper still validates - see
+    _profile_item_names' docstring."""
+
+    def test_a_real_key_responsibility_is_included_verbatim(self):
+        names = _profile_item_names(PROFILE)
+        self.assertIn("triaged phishing alerts", names)
+
+    def test_a_citation_embedding_real_text_inside_a_messy_wrapper_validates(self):
+        # Mirrors the exact real-world case: "work_experience > 2022-01 >
+        # key_responsibilities > <verbatim real sentence>" - not a clean path
+        # (the pseudo-index "2022-01" isn't a real index), but the real
+        # sentence is embedded verbatim at the end.
+        result = _sanitize_evidence([{
+            "requirement": "Technical escalation", "evidence_level": "EXPLICIT",
+            "sources": ["work_experience > 2022-01 > key_responsibilities > Triaged phishing alerts"],
+        }], _profile_item_names(PROFILE))
+        self.assertEqual(result[0]["evidence_level"], "EXPLICIT")
+
+    def test_short_fragments_are_not_added(self):
+        profile = {"work_experience": [{"key_responsibilities": ["IT"], "role": "X"}]}
+        names = _profile_item_names(profile)
+        self.assertNotIn("it", names)
 
 
 class EvidenceValidatorTests(unittest.TestCase):
@@ -198,6 +244,84 @@ class MatchEvidenceOrchestrationTests(unittest.IsolatedAsyncioTestCase):
         results = await match_evidence(provider, requirements, PROFILE, PROFILE)
         self.assertEqual(results[0]["evidence_level"], "NOT_FOUND")
         self.assertEqual(results[0]["confidence"], 0.9)
+
+
+COMPACT_PROFILE = {
+    "work_experience": [
+        {"role": "Senior SOC Analyst", "company": "Acme Ltd",
+         "key_responsibilities": ["Triaged phishing alerts", "Mentored junior analysts through live case review"]},
+    ],
+    "target_roles": ["Information Security Analyst"],
+}
+
+
+class ResolvePathCitationTests(unittest.TestCase):
+    def test_resolves_a_colon_separated_path(self):
+        result = _resolve_path_citation("work_experience:0:key_responsibilities:1", COMPACT_PROFILE)
+        self.assertEqual(result, "Mentored junior analysts through live case review")
+
+    def test_resolves_a_dot_separated_path(self):
+        result = _resolve_path_citation("work_experience.0.role", COMPACT_PROFILE)
+        self.assertEqual(result, "Senior SOC Analyst")
+
+    def test_resolves_a_top_level_list_field(self):
+        result = _resolve_path_citation("target_roles.0", COMPACT_PROFILE)
+        self.assertEqual(result, "Information Security Analyst")
+
+    def test_out_of_range_index_returns_none(self):
+        self.assertIsNone(_resolve_path_citation("work_experience.5.role", COMPACT_PROFILE))
+
+    def test_unknown_field_returns_none(self):
+        self.assertIsNone(_resolve_path_citation("work_experience.0.nonexistent_field", COMPACT_PROFILE))
+
+    def test_free_text_is_not_treated_as_a_path(self):
+        self.assertIsNone(_resolve_path_citation("Achievement: Led ransomware response", COMPACT_PROFILE))
+
+    def test_empty_or_none_source_returns_none(self):
+        self.assertIsNone(_resolve_path_citation("", COMPACT_PROFILE))
+        self.assertIsNone(_resolve_path_citation(None, COMPACT_PROFILE))
+
+    def test_resolves_a_slash_separated_path(self):
+        result = _resolve_path_citation("work_experience/0/key_responsibilities/1", COMPACT_PROFILE)
+        self.assertEqual(result, "Mentored junior analysts through live case review")
+
+    def test_resolves_a_bare_top_level_field_name(self):
+        data = {"professional_summary": "Eight years in dedicated SOC roles."}
+        self.assertEqual(_resolve_path_citation("professional_summary", data), "Eight years in dedicated SOC roles.")
+
+    def test_bare_word_that_is_not_a_real_field_returns_none(self):
+        self.assertIsNone(_resolve_path_citation("Splunk", COMPACT_PROFILE))
+
+    def test_bare_field_resolving_to_a_list_returns_none(self):
+        # A list/dict isn't a citable value on its own - only string/number leaves are.
+        self.assertIsNone(_resolve_path_citation("work_experience", COMPACT_PROFILE))
+
+
+class SanitizeEvidencePathResolutionTests(unittest.TestCase):
+    def setUp(self):
+        self.known = _profile_item_names(PROFILE)
+
+    def test_resolves_and_keeps_a_path_style_citation(self):
+        result = _sanitize_evidence([{
+            "requirement": "Mentoring", "evidence_level": "EXPLICIT",
+            "sources": ["work_experience:0:key_responsibilities:1"],
+        }], self.known, COMPACT_PROFILE)
+        self.assertEqual(result[0]["evidence_level"], "EXPLICIT")
+        self.assertEqual(result[0]["sources"], ["Mentored junior analysts through live case review"])
+
+    def test_a_path_that_does_not_resolve_still_gets_downgraded(self):
+        result = _sanitize_evidence([{
+            "requirement": "X", "evidence_level": "EXPLICIT",
+            "sources": ["work_experience.99.role"],
+        }], self.known, COMPACT_PROFILE)
+        self.assertEqual(result[0]["evidence_level"], "NOT_FOUND")
+
+    def test_without_compact_profile_falls_back_to_the_old_behaviour(self):
+        result = _sanitize_evidence([{
+            "requirement": "X", "evidence_level": "EXPLICIT",
+            "sources": ["work_experience:0:key_responsibilities:1"],
+        }], self.known)  # no compact_profile passed
+        self.assertEqual(result[0]["evidence_level"], "NOT_FOUND")
 
 
 class MatchEvidenceLlmChunkingTests(unittest.IsolatedAsyncioTestCase):

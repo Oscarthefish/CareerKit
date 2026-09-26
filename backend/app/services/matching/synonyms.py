@@ -40,7 +40,8 @@ SYNONYM_GROUPS: list[set[str]] = [
     {"phishing simulation", "phishing awareness", "phishing testing"},
     {"digital forensics", "computer forensics", "forensic investigation", "dfir"},
     {"malware analysis", "malware reverse engineering", "reverse engineering malware"},
-    {"soc analyst", "security operations analyst", "security analyst"},
+    {"soc analyst", "security operations analyst", "security analyst", "information security analyst",
+     "cyber security analyst"},
 ]
 
 _LOOKUP: dict[str, set[str]] = {}
