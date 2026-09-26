@@ -21,6 +21,44 @@ _STOPWORDS = {
 }
 
 
+def _strip_trailing_line_commas(content: str) -> str:
+    """Safety net: a Key Skills category line's content sometimes gets cut
+    short with a dangling trailing comma right before the line break -
+    cosmetic, but never correct in any line on this CV, so just strip it."""
+    return re.sub(r",[ \t]*\n", "\n", content)
+
+
+def _force_correct_certifications(content: str, certifications: list[dict]) -> str:
+    """Safety net: cv_generation.md instructs every certification to use its
+    "display_line" field verbatim - already exactly worded and correct - but
+    the model has repeatedly retyped the abbreviation for one particular
+    certification wrong anyway (e.g. "Practical Junior OSINT Researcher
+    (PJOR)" typed out as "(PJR)"). Rather than chase that one recurring typo,
+    force the whole section to the verbatim display_line list, the same way
+    Platforms & Tools is force-corrected above."""
+    lines = [c.get("display_line") for c in certifications if c.get("display_line")]
+    if not lines:
+        return content
+    correct_block = "\n".join(f"- {l}" for l in lines)
+    pattern = re.compile(r"(^## CERTIFICATIONS\s*\n)(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
+    if not pattern.search(content):
+        return content
+    return pattern.sub(lambda m: m.group(1) + correct_block + "\n", content, count=1)
+
+
+def _merge_key_skills_continuations(content: str) -> str:
+    """Safety net: cv_generation.md is explicit that Platforms & Tools,
+    Security Domains and Leadership & People must all stay under the single
+    "## KEY SKILLS" heading, never split into their own heading - but the
+    model has been observed splitting one or more of them out into a
+    "## KEY SKILLS (continued)" section anyway, duplicating content that's
+    already present (correctly, once the Platforms & Tools force-correction
+    below has run) in the main section. Strip any such section entirely
+    rather than let a duplicated, non-standard heading reach the CV."""
+    pattern = re.compile(r"\n## KEY SKILLS[^\n]*continued[^\n]*\n.*?(?=\n## |\Z)", re.IGNORECASE | re.DOTALL)
+    return pattern.sub("", content)
+
+
 def _significant_words(text: str) -> set[str]:
     words = (raw.strip(".,;:()\"'").lower() for raw in (text or "").split())
     return {w for w in words if len(w) > 3 and w not in _STOPWORDS}
@@ -82,6 +120,154 @@ def _enrich_achievement_bullets(content: str, achievements: list[dict]) -> str:
         line_pattern = re.compile(rf"^- +({re.escape(title)}.*)$", re.MULTILINE | re.IGNORECASE)
         section_body = line_pattern.sub(_replace_line, section_body, count=1)
 
+    return content[:section_match.start(2)] + section_body + content[section_match.end(2):]
+
+
+def _ensure_all_achievements_present(content: str, achievements: list[dict]) -> str:
+    """Safety net: with a long achievement list, a local model doesn't just
+    under-enrich a bullet (see _enrich_achievement_bullets above) - it
+    sometimes drops whole achievements from "## SELECTED ACHIEVEMENTS"
+    entirely, and empirically favours ones earlier in the list over ones
+    added more recently. Detect any achievement whose title doesn't appear
+    anywhere in that section at all and append it, properly enriched, rather
+    than silently letting real achievements vanish from the CV."""
+    section_match = re.search(r"(^## SELECTED ACHIEVEMENTS\s*\n)(.*?)(?=\n## |\Z)", content, re.MULTILINE | re.DOTALL)
+    if not section_match:
+        return content
+    section_body = section_match.group(2)
+
+    missing_lines = []
+    for a in achievements:
+        title = (a.get("title") or "").strip()
+        if not title or title.lower() in section_body.lower():
+            continue
+        detail = a.get("result") or a.get("action") or ""
+        missing_lines.append(f"- {_build_achievement_bullet(title, detail)}")
+
+    if missing_lines:
+        section_body = section_body.rstrip("\n") + "\n" + "\n".join(missing_lines) + "\n"
+
+    return content[:section_match.start(2)] + section_body + content[section_match.end(2):]
+
+
+def _dedupe_achievement_bullets(content: str, achievements: list[dict]) -> str:
+    """Safety net: rather than just under- or over-including achievements (see
+    the two functions above), a local model has also been observed emitting
+    the whole "## SELECTED ACHIEVEMENTS" section twice in one generation - a
+    first pass of bare, untitled result-only bullets, followed by a second,
+    correct pass of "Title. Result" bullets - doubling the section's length
+    with no new information. Run this AFTER enrichment and the
+    missing-achievement check above, so every achievement's titled bullet is
+    guaranteed to exist first; then drop any bullet that (a) isn't itself
+    prefixed by a known achievement title and (b) substantially restates one
+    that is."""
+    section_match = re.search(r"(^## SELECTED ACHIEVEMENTS\s*\n)(.*?)(?=\n## |\Z)", content, re.MULTILINE | re.DOTALL)
+    if not section_match:
+        return content
+    section_body = section_match.group(2)
+    lines = section_body.split("\n")
+
+    titles_lower = [(a.get("title") or "").strip().lower() for a in achievements if (a.get("title") or "").strip()]
+
+    def _starts_with_a_title(line: str) -> bool:
+        text = line.lstrip("-").strip().lower()
+        return any(text.startswith(t) for t in titles_lower)
+
+    titled_lines = [l for l in lines if l.strip().startswith("-") and _starts_with_a_title(l)]
+
+    kept = []
+    for line in lines:
+        if not line.strip().startswith("-") or _starts_with_a_title(line):
+            kept.append(line)
+            continue
+        words = _significant_words(line)
+        is_dup = False
+        for t_line in titled_lines:
+            t_words = _significant_words(t_line)
+            if not words or not t_words:
+                continue
+            # Divide by the smaller word set rather than always the candidate
+            # line's own: the bare duplicate often carries a few extra words
+            # the titled version doesn't (e.g. "Project Manager"), which would
+            # otherwise dilute the ratio below threshold on a real duplicate.
+            overlap = len(words & t_words) / min(len(words), len(t_words))
+            if overlap > 0.5:
+                is_dup = True
+                break
+        if not is_dup:
+            kept.append(line)
+
+    new_body = "\n".join(kept)
+    return content[:section_match.start(2)] + new_body + content[section_match.end(2):]
+
+
+_MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _format_role_date(value: str) -> str:
+    """Profile dates are stored as "YYYY-MM"; cv_generation.md has the model
+    write these out as "Mon YYYY" itself, so a heading built in code needs the
+    same conversion to match. Falls back to the raw value unchanged for
+    anything that isn't the expected shape rather than risk mangling it."""
+    if not value:
+        return ""
+    m = re.match(r"^(\d{4})-(\d{1,2})$", value.strip())
+    if not m:
+        return value
+    year, month = m.groups()
+    idx = int(month) - 1
+    return f"{_MONTH_ABBR[idx]} {year}" if 0 <= idx < 12 else value
+
+
+def _ensure_all_roles_present(content: str, work_experience: list[dict]) -> str:
+    """Safety net: mirrors _ensure_all_achievements_present above, but for
+    Professional Experience roles. cv_generation.md already instructs that a
+    role with no description or key_responsibilities still gets its "###"
+    heading line with no bullets under it, specifically so the career
+    timeline never shows an unexplained gap - but a local model has been
+    observed dropping such a role's heading entirely anyway (in practice, the
+    oldest, least-detailed one), silently opening exactly the gap that rule
+    exists to prevent. Detect any role whose company+role combination isn't
+    present as a "###" heading anywhere in the section and insert it."""
+    section_match = re.search(r"(^## PROFESSIONAL EXPERIENCE\s*\n)(.*?)(?=\n## |\Z)", content, re.MULTILINE | re.DOTALL)
+    if not section_match:
+        return content
+    section_body = section_match.group(2)
+
+    heading_lines = re.findall(r"^### .*$", section_body, re.MULTILINE)
+
+    def _is_present(role: str, company: str) -> bool:
+        role_l, company_l = role.lower(), company.lower()
+        return any(role_l in h.lower() and company_l in h.lower() for h in heading_lines)
+
+    # work_experience arrives ordered most-recent-first (order_index), so
+    # walking it in that order and appending keeps any missing role(s) - in
+    # practice the oldest, trailing entries - in correct chronological
+    # position at the end of the section without needing general mid-list
+    # insertion logic.
+    missing_blocks = []
+    for e in work_experience:
+        role = (e.get("role") or "").strip()
+        company = (e.get("company") or "").strip()
+        if not role or not company or _is_present(role, company):
+            continue
+        start = _format_role_date(e.get("start_date") or "")
+        end = "Present" if e.get("is_current") else _format_role_date(e.get("end_date") or "")
+        date_range = " - ".join(p for p in (start, end) if p)
+        heading = f"### {role} | {company}" + (f" | {date_range}" if date_range else "")
+        lines = [heading]
+        description = (e.get("description") or "").strip()
+        if description:
+            lines.append(f"- {description}")
+        for r in e.get("key_responsibilities") or []:
+            if r and r.strip():
+                lines.append(f"- {r.strip()}")
+        missing_blocks.append("\n".join(lines))
+
+    if not missing_blocks:
+        return content
+
+    section_body = section_body.rstrip("\n") + "\n\n" + "\n\n".join(missing_blocks) + "\n"
     return content[:section_match.start(2)] + section_body + content[section_match.end(2):]
 
 
@@ -189,6 +375,8 @@ async def generate_cv(mode: str = "cv_safe", db: Session = Depends(get_db)):
     # role with no recorded detail. Strip it in code rather than trusting the
     # model to always follow the "no data, no bullet" instruction.
     content = re.sub(r"\n[ \t]*-[ \t]*\n", "\n", content)
+    content = _strip_trailing_line_commas(content)
+    content = _merge_key_skills_continuations(content)
 
     # Safety net: Platforms & Tools is meant to be copied verbatim from
     # platforms_and_tools_display (built deterministically so it can't
@@ -241,7 +429,11 @@ async def generate_cv(mode: str = "cv_safe", db: Session = Depends(get_db)):
         if name_line_pattern.search(content):
             content = name_line_pattern.sub(lambda m: m.group(1) + f" URL: {url}", content, count=1)
 
+    content = _ensure_all_roles_present(content, profile.get("work_experience", []))
     content = _enrich_achievement_bullets(content, profile.get("achievements", []))
+    content = _ensure_all_achievements_present(content, profile.get("achievements", []))
+    content = _dedupe_achievement_bullets(content, profile.get("achievements", []))
+    content = _force_correct_certifications(content, profile.get("certifications", []))
 
     row = CVVersion(version_name=f"AI Generated ({mode})", content_markdown=content)
     db.add(row)

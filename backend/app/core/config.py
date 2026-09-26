@@ -10,7 +10,7 @@ SETTINGS_FILE = CONFIG_DIR / "settings.json"
 DEFAULT_SETTINGS = {
     "ollama_url": "http://localhost:11434",
     "ollama_model": "llama3.1",
-    "ollama_num_ctx": 16384,
+    "ollama_num_ctx": 32768,
     "app_name": "CareerKit Local",
     "db_path": str(DATA_DIR / "careerkit.db"),
 }
