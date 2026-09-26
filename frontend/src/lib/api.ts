@@ -125,6 +125,7 @@ export const generateCV = (mode: string = 'cv_safe') => request(`/api/cv/generat
 export const saveCV = (data: object) =>
   request('/api/cv/save', { method: 'POST', body: JSON.stringify(data) })
 export const brutalReview = () => request('/api/cv/review', { method: 'POST' })
+export const checkATSHealth = () => request('/api/cv/ats-check', { method: 'POST' })
 export const exportCV = (fmt: string) => `${API_BASE}/api/cv/export/${fmt}`
 
 // Examples
@@ -165,6 +166,13 @@ export const analyzeJob = (id: number) =>
   request(`/api/applications/${id}/analyze`, { method: 'POST' })
 export const generateScorecard = (id: number) =>
   request(`/api/applications/${id}/scorecard`, { method: 'POST' })
+export const generateJobMatch = (id: number) =>
+  request(`/api/applications/${id}/job-match`, { method: 'POST' })
+export const generateCustomCV = (id: number, selectedFixes: string[]) =>
+  request(`/api/applications/${id}/custom-cv`, { method: 'POST', body: JSON.stringify({ selected_fixes: selectedFixes }) })
+
+// Master CV Feedback Loop
+export const getSkillGaps = () => request('/api/insights/skill-gaps')
 export const generateCoverLetter = (id: number) =>
   request(`/api/applications/${id}/cover-letter`, { method: 'POST' })
 export const generateCVNotes = (id: number) =>

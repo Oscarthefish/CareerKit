@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Callable, Optional
 
 
 class AIProvider(ABC):
@@ -32,11 +32,18 @@ class AIProvider(ABC):
         prompt: str,
         system: Optional[str] = None,
         required_keys: Optional[list[str]] = None,
+        validate: Optional[Callable[[dict], Optional[str]]] = None,
     ) -> dict:
         """Generate and parse a JSON response.
 
         If ``required_keys`` is given, the response must contain at least one of
         them or the provider retries once and then raises ``ValueError``.
+
+        If ``validate`` is given, it is called with the parsed response and may
+        return an error string (triggering the same one-retry-then-raise
+        behaviour as required_keys) or None if the response is acceptable. Use
+        this for structural checks required_keys can't express — enum values,
+        or that a cited evidence source is actually a real profile item.
         """
 
     @abstractmethod

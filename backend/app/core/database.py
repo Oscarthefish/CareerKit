@@ -35,7 +35,7 @@ def get_db():
 
 
 def init_db():
-    from ..models import profile, job, cv, scanner, reachout  # noqa: F401 — registers models
+    from ..models import profile, job, cv, scanner, reachout, analysis  # noqa: F401 — registers models
     Base.metadata.create_all(bind=engine)
     # Add columns that may not exist in databases created before migrations
     _migrations = [
@@ -51,6 +51,11 @@ def init_db():
         ("evidence_items", "confidentiality_level", "VARCHAR(20) DEFAULT 'cv_safe'"),
         ("certifications", "status", "VARCHAR(30) DEFAULT 'active'"),
         ("certifications", "notes", "TEXT"),
+        ("job_applications", "job_requirements", "TEXT"),
+        ("job_applications", "job_match_result", "TEXT"),
+        ("cv_versions", "recruiter_readiness_result", "TEXT"),
+        ("job_applications", "custom_cv", "TEXT"),
+        ("job_applications", "custom_cv_fixes_applied", "TEXT"),
     ]
     inspector = inspect(engine)
     with engine.begin() as conn:

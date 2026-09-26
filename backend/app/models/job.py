@@ -16,10 +16,14 @@ class JobApplication(Base):
     salary_range = Column(String(100))
     job_description_raw = Column(Text)
     job_analysis = Column(Text)       # JSON
-    match_scorecard = Column(Text)    # JSON
+    match_scorecard = Column(Text)    # JSON — the original LLM-only fit assessment, unchanged
+    job_requirements = Column(Text)   # JSON — structured JD Intelligence (see services/matching)
+    job_match_result = Column(Text)   # JSON — explainable Job Match score + coverage/recommendations
     cover_letter = Column(Text)
     cv_adjustment_notes = Column(Text)
     tailored_cv = Column(Text)
+    custom_cv = Column(Text)                  # markdown — generated from selected Job Match fixes only
+    custom_cv_fixes_applied = Column(Text)    # JSON — requirement names of the fixes actually applied
     interview_prep = Column(Text)
     linkedin_angle = Column(Text)
     recruiter_message = Column(Text)

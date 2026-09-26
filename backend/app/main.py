@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .core.database import init_db
-from .api import profile, cv, applications, examples, linkedin, settings, ai, scanner, reachouts
+from .api import profile, cv, applications, examples, linkedin, settings, ai, scanner, reachouts, insights
 
 app = FastAPI(title="CareerKit Local", version="1.0.0")
 
@@ -37,3 +37,4 @@ app.include_router(settings.router)
 app.include_router(ai.router)
 app.include_router(scanner.router)
 app.include_router(reachouts.router)
+app.include_router(insights.router)

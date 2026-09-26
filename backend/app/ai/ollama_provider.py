@@ -1,7 +1,7 @@
 import json
 import re
 import httpx
-from typing import Optional
+from typing import Callable, Optional
 from .base import AIProvider
 
 # Prepended to every system prompt. Local 8B models routinely drop style rules
@@ -203,6 +203,7 @@ class OllamaProvider(AIProvider):
         prompt: str,
         system: Optional[str] = None,
         required_keys: Optional[list[str]] = None,
+        validate: Optional[Callable[[dict], Optional[str]]] = None,
     ) -> dict:
         json_system = (
             self._system(system)
@@ -260,6 +261,17 @@ class OllamaProvider(AIProvider):
                     f"got {list(parsed) if isinstance(parsed, dict) else type(parsed).__name__}"
                 )
                 continue
+
+            if validate:
+                # A generic, caller-supplied structural check (enum values, that
+                # a cited "evidence" source is a real profile item, etc.) — same
+                # retry-then-fail contract as the required_keys check above, so
+                # every JSON caller can plug in its own validation without
+                # duplicating the retry/attempt-counting logic here.
+                error = validate(parsed)
+                if error:
+                    last_error = ValueError(f"validation failed: {error}")
+                    continue
 
             return parsed
 

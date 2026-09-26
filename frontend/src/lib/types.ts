@@ -170,9 +170,12 @@ export interface JobApplication {
   job_description_raw: string | null
   job_analysis: JobAnalysis | null
   match_scorecard: MatchScorecard | null
+  job_match_result: JobMatchResult | null
   cover_letter: string | null
   cv_adjustment_notes: string | null
   tailored_cv: string | null
+  custom_cv: string | null
+  custom_cv_fixes_applied: string[] | null
   interview_prep: InterviewPrep | null
   linkedin_angle: string | null
   recruiter_message: string | null
@@ -193,6 +196,7 @@ export interface JobApplicationSummary {
   created_at: string
   has_analysis: boolean
   has_scorecard: boolean
+  has_job_match: boolean
   has_cover_letter: boolean
   has_interview_prep: boolean
 }
@@ -230,6 +234,141 @@ export interface MatchScorecard {
   suggested_angle: string
   ats_keywords_to_include: string[]
   overall_recommendation: string
+}
+
+// --- CV Match Report (Job Match engine) ---
+
+export type EvidenceLevel = 'EXPLICIT' | 'INFERRED' | 'POSSIBLE' | 'NOT_FOUND'
+export type Coverage = 'STRONG_EVIDENCE' | 'PARTIAL_EVIDENCE' | 'NO_EVIDENCE' | 'UNKNOWN'
+export type RequirementImportance = 'critical' | 'important' | 'desirable'
+export type RequirementType =
+  | 'hard_skill' | 'tool' | 'methodology' | 'responsibility' | 'certification' | 'industry' | 'soft_skill'
+export type TitleMatchState = 'EXACT_MATCH' | 'STRONG_EQUIVALENT' | 'RELATED_TITLE' | 'WEAK_ALIGNMENT' | 'NO_ALIGNMENT'
+export type RecommendationTier = 'SAFE_OPTIMISATION' | 'EVIDENCE_NEEDED' | 'DO_NOT_ADD'
+
+export interface SubScore {
+  score: number | null
+  requirement_count: number
+}
+
+export interface JobMatchScore {
+  overall: number
+  band: string
+  sub_scores: {
+    hard_skills: SubScore
+    experience_seniority: SubScore
+    qualifications: SubScore
+    soft_skills: SubScore
+    industry_context: SubScore
+    job_title: SubScore
+  }
+}
+
+export interface TitleMatch {
+  state: TitleMatchState
+  matched_title: string | null
+  explanation: string
+  job_title: string
+}
+
+export interface RequirementCoverageRow {
+  name: string
+  type: RequirementType
+  importance: RequirementImportance
+  coverage: Coverage
+  icon: string
+  label: string
+  sources: string[]
+  rationale: string
+}
+
+export interface HardSkillRow {
+  skill: string
+  importance: RequirementImportance
+  coverage: Coverage
+  assessment: string
+  sources: string[]
+}
+
+export interface KeywordCoverage {
+  matched: number
+  partial: number
+  missing: number
+  total: number
+  coverage_pct: number
+  by_category: Record<string, { matched: number; partial: number; missing: number }>
+}
+
+export interface PriorityFix {
+  requirement: string
+  type: string
+  importance: RequirementImportance
+  coverage: Coverage
+  tier: RecommendationTier
+  severity: 'critical' | 'high' | 'medium' | 'low'
+  message: string
+}
+
+export interface JobMatchResult {
+  job_match: JobMatchScore
+  title_match: TitleMatch
+  ats_check: AtsCheckResult | null
+  recruiter_readiness: RecruiterReadinessScore | null
+  requirement_coverage: RequirementCoverageRow[]
+  hard_skills: HardSkillRow[]
+  keyword_coverage: KeywordCoverage
+  priority_fixes: { top: PriorityFix[]; more: PriorityFix[] }
+  requirements_by_importance: { critical: string[]; important: string[]; desirable: string[] }
+}
+
+export interface CustomCvScores {
+  job_match: number
+  ats_check: number | null
+  recruiter_readiness: number | null
+}
+
+export interface CustomCvResult {
+  custom_cv: string
+  applied_fixes: string[]
+  before: CustomCvScores
+  after: CustomCvScores
+  ats_check: AtsCheckResult
+  recruiter_readiness: RecruiterReadinessScore | null
+}
+
+// --- Master CV Feedback Loop ---
+
+export interface SkillGap {
+  skill: string
+  appearances: number
+  weak_count: number
+  sample_roles: string[]
+}
+
+export interface SkillGapsResult {
+  skill_gaps: SkillGap[]
+  applications_considered: number
+}
+
+// --- ATS Compatibility (Master CV Health Check) ---
+
+export type CheckStatus = 'pass' | 'warn' | 'fail' | 'info'
+
+export interface AtsCheck {
+  id: string
+  category: 'content' | 'document'
+  label: string
+  status: CheckStatus
+  detail: string
+  weight: number
+}
+
+export interface AtsCheckResult {
+  score: number
+  band: string
+  content_checks: AtsCheck[]
+  document_checks: AtsCheck[]
+  ats_parsed_view?: string
 }
 
 export interface InterviewQuestion {
@@ -365,4 +504,17 @@ export interface BrutalReview {
   shortlisting_blockers: string[]
   priority_fixes: { rank: number; issue: string; fix: string }[]
   overall_verdict: string
+  readiness?: RecruiterReadinessScore
+}
+
+export interface RecruiterReadinessScore {
+  score: number
+  band: string
+  sub_scores: {
+    first_impression: number
+    credibility: number
+    achievement_quality: number
+    readability: number
+    shortlisting_readiness: number
+  }
 }

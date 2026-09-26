@@ -10,6 +10,10 @@ class CVVersion(Base):
     version_name = Column(String(200))
     content_markdown = Column(Text)
     content_json = Column(Text)
+    # JSON — cached Recruiter Readiness result (brutal_review + computed score).
+    # This CV version is immutable once created, so the result never goes
+    # stale; a new CV always gets a new row and needs a fresh computation.
+    recruiter_readiness_result = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
