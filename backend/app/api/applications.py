@@ -263,6 +263,8 @@ async def generate_scorecard(app_id: int, db: Session = Depends(get_db)):
             detail=f"The local model returned an unusable response ({e}). Try regenerating, "
                    "or pick a larger model in Settings.",
         )
+    from ..services.matching.evidence import sanitize_scorecard
+    scorecard = sanitize_scorecard(scorecard, profile)
     app.match_scorecard = json.dumps(scorecard)
     db.commit()
     persist_application_files(db, app_id)

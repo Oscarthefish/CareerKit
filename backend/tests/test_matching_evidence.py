@@ -2,12 +2,14 @@ import unittest
 
 from app.services.matching.evidence import (
     _MAX_REQUIREMENTS_PER_LLM_CALL,
+    _evidence_is_real,
     _make_structure_validator,
     _profile_item_names,
     _sanitize_evidence,
     match_evidence,
     match_evidence_llm,
     match_requirement_deterministic,
+    sanitize_scorecard,
 )
 
 PROFILE = {
@@ -259,6 +261,74 @@ class MatchEvidenceLlmChunkingTests(unittest.IsolatedAsyncioTestCase):
 
         await match_evidence_llm(Provider(), ["Only one"], PROFILE, PROFILE)
         self.assertEqual(len(calls), 1)
+
+
+class EvidenceIsRealTests(unittest.TestCase):
+    def setUp(self):
+        self.known = _profile_item_names(PROFILE)
+
+    def test_the_literal_string_none_is_not_real_evidence(self):
+        self.assertFalse(_evidence_is_real("None", self.known))
+        self.assertFalse(_evidence_is_real("none", self.known))
+
+    def test_other_placeholder_values_are_not_real_evidence(self):
+        for placeholder in ("N/A", "-", "unspecified", "TBC", ""):
+            self.assertFalse(_evidence_is_real(placeholder, self.known))
+
+    def test_a_real_profile_item_reference_is_real_evidence(self):
+        self.assertTrue(_evidence_is_real("Achievement: Led ransomware response", self.known))
+
+    def test_a_fabricated_reference_is_not_real_evidence(self):
+        self.assertFalse(_evidence_is_real("Something that doesn't exist in the profile", self.known))
+
+
+class SanitizeScorecardTests(unittest.TestCase):
+    def test_moves_a_none_evidence_strong_match_to_do_not_claim(self):
+        scorecard = {
+            "strong_matches": [{"skill": "NIST CSF", "evidence": "None"}],
+            "do_not_claim": [],
+        }
+        result = sanitize_scorecard(scorecard, PROFILE)
+        self.assertEqual(result["strong_matches"], [])
+        self.assertIn("NIST CSF", result["do_not_claim"])
+
+    def test_keeps_a_strong_match_with_real_evidence(self):
+        scorecard = {
+            "strong_matches": [{"skill": "Incident Response", "evidence": "Achievement: Led ransomware response"}],
+            "do_not_claim": [],
+        }
+        result = sanitize_scorecard(scorecard, PROFILE)
+        self.assertEqual(len(result["strong_matches"]), 1)
+        self.assertEqual(result["strong_matches"][0]["skill"], "Incident Response")
+
+    def test_moves_a_fabricated_evidence_strong_match_to_do_not_claim(self):
+        scorecard = {
+            "strong_matches": [{"skill": "Cloud Security", "evidence": "Extensive cloud security background"}],
+            "do_not_claim": [],
+        }
+        result = sanitize_scorecard(scorecard, PROFILE)
+        self.assertEqual(result["strong_matches"], [])
+        self.assertIn("Cloud Security", result["do_not_claim"])
+
+    def test_preserves_existing_do_not_claim_entries(self):
+        scorecard = {
+            "strong_matches": [{"skill": "X", "evidence": "None"}],
+            "do_not_claim": ["Already listed gap"],
+        }
+        result = sanitize_scorecard(scorecard, PROFILE)
+        self.assertIn("Already listed gap", result["do_not_claim"])
+        self.assertIn("X", result["do_not_claim"])
+
+    def test_missing_strong_matches_key_does_not_crash(self):
+        result = sanitize_scorecard({"do_not_claim": []}, PROFILE)
+        self.assertEqual(result["strong_matches"], [])
+
+    def test_does_not_mutate_the_input_scorecard(self):
+        scorecard = {"strong_matches": [{"skill": "X", "evidence": "None"}], "do_not_claim": []}
+        import copy
+        before = copy.deepcopy(scorecard)
+        sanitize_scorecard(scorecard, PROFILE)
+        self.assertEqual(scorecard, before)
 
 
 if __name__ == "__main__":
