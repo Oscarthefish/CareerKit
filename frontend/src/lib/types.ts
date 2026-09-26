@@ -199,6 +199,8 @@ export interface JobApplicationSummary {
   has_job_match: boolean
   has_cover_letter: boolean
   has_interview_prep: boolean
+  job_match_score: number | null
+  job_match_band: string | null
 }
 
 export interface JobAnalysis {

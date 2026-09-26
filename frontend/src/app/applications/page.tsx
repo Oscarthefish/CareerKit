@@ -116,6 +116,7 @@ export default function ApplicationsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3 ml-4">
+                  {app.job_match_score != null && <JobMatchBadge score={app.job_match_score} band={app.job_match_band} />}
                   <span className={STATUS_COLORS[app.status] || 'badge-gray'}>{app.status}</span>
                   <button
                     onClick={(e) => handleDelete(app.id, e)}
@@ -136,5 +137,18 @@ export default function ApplicationsPage() {
 function Pip({ active, label }: { active: boolean; label: string }) {
   return (
     <span title={label} className={`w-2 h-2 rounded-full ${active ? 'bg-green-400' : 'bg-gray-200'}`} />
+  )
+}
+
+function JobMatchBadge({ score, band }: { score: number; band: string | null }) {
+  const style =
+    score >= 80 ? 'bg-green-100 text-green-800' : score >= 60 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+  return (
+    <span
+      title={band ? `Job Match · ${band}` : 'Job Match'}
+      className={`px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${style}`}
+    >
+      {score}% match
+    </span>
   )
 }
