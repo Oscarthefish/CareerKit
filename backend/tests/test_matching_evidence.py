@@ -3,7 +3,9 @@ import unittest
 from app.services.matching.evidence import (
     _MAX_REQUIREMENTS_PER_LLM_CALL,
     _evidence_is_real,
+    _extract_candidate_phrases,
     _make_structure_validator,
+    _match_compound_requirement,
     _profile_item_names,
     _resolve_path_citation,
     _sanitize_evidence,
@@ -112,6 +114,62 @@ class ProfileItemNamesFreeTextTests(unittest.TestCase):
         profile = {"work_experience": [{"key_responsibilities": ["IT"], "role": "X"}]}
         names = _profile_item_names(profile)
         self.assertNotIn("it", names)
+
+
+class ExtractCandidatePhrasesTests(unittest.TestCase):
+    def test_strips_leading_and_trailing_filler(self):
+        self.assertEqual(_extract_candidate_phrases("Strong expertise across SIEM"), ["SIEM"])
+
+    def test_splits_on_and_and_slash(self):
+        result = _extract_candidate_phrases("Strong expertise across SIEM and EDR/XDR platforms")
+        self.assertEqual(result, ["SIEM", "EDR", "XDR"])
+
+    def test_splits_a_simple_and_pair(self):
+        result = _extract_candidate_phrases("Excellent problem-solving and communication abilities")
+        self.assertEqual(result, ["problem-solving", "communication"])
+
+    def test_single_concept_with_filler_still_returns_one_phrase(self):
+        self.assertEqual(_extract_candidate_phrases("Strong SIEM experience"), ["SIEM"])
+
+
+class MatchCompoundRequirementTests(unittest.TestCase):
+    def setUp(self):
+        self.profile = {
+            "skills": [
+                {"name": "Splunk Enterprise Security", "aliases": ["SIEM"], "category": "tool"},
+                {"name": "Endpoint Detection & Response (EDR)", "aliases": [], "category": "technical"},
+            ],
+            "work_experience": [],
+            "achievements": [],
+            "certifications": [],
+            "training": [],
+            "projects": [],
+            "evidence": [],
+        }
+
+    def test_returns_none_for_a_single_concept_name(self):
+        # Not actually compound - nothing extra for this function to try.
+        self.assertIsNone(_match_compound_requirement("SIEM", self.profile))
+
+    def test_explicit_when_every_phrase_matches(self):
+        result = _match_compound_requirement("Strong expertise across SIEM and EDR platforms", self.profile)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["evidence_level"], "EXPLICIT")
+
+    def test_inferred_with_honest_gap_when_only_some_match(self):
+        result = _match_compound_requirement("Strong SIEM and cloud security posture management skills", self.profile)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["evidence_level"], "INFERRED")
+        self.assertIn("cloud security posture management", result["rationale"])
+
+    def test_none_when_nothing_matches(self):
+        result = _match_compound_requirement("Strong AWS and Azure cloud skills", self.profile)
+        self.assertIsNone(result)
+
+    def test_wired_into_match_requirement_deterministic(self):
+        result = match_requirement_deterministic("Strong expertise across SIEM and EDR platforms", self.profile)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["evidence_level"], "EXPLICIT")
 
 
 class EvidenceValidatorTests(unittest.TestCase):

@@ -135,6 +135,81 @@ def _search(term_variants: set[str], haystack: list[tuple[str, str]]) -> list[st
     return out[:5]
 
 
+_FILLER_WORDS = {
+    "strong", "excellent", "extensive", "solid", "proven", "demonstrated", "good", "advanced",
+    "deep", "broad", "comprehensive", "practical", "hands-on", "hands",
+    "experience", "expertise", "skills", "skill", "abilities", "ability", "knowledge",
+    "understanding", "background", "platforms", "capability", "capabilities",
+    "across", "in", "with", "of", "on", "the", "a", "an",
+}
+_COMPOUND_SPLIT = re.compile(r"\s*(?:,|/| and | & )\s*", re.IGNORECASE)
+
+
+def _extract_candidate_phrases(requirement_name: str) -> list[str]:
+    """Break a padded, multi-concept requirement name (e.g. "Strong expertise
+    across SIEM and EDR/XDR platforms") into individual candidate phrases
+    ("SIEM", "EDR", "XDR") a deterministic search can check independently.
+    The exact-phrase/synonym search above only ever matches a short, specific
+    term against the haystack - a JD-style sentence bundling several concepts
+    together never gets a chance there even when every concept in it is
+    individually well-evidenced (observed in practice: "Strong expertise
+    across SIEM and EDR/XDR platforms" failing while a separately-extracted
+    "SIEM and EDR/XDR platforms" requirement for the exact same thing
+    succeeds). Filler words are stripped from BOTH ends of each part, since a
+    qualifier like "expertise across" sits in front of the real concept just
+    as often as a trailing one like "... platforms" sits behind it."""
+    phrases = []
+    for part in _COMPOUND_SPLIT.split(requirement_name.strip()):
+        words = part.split()
+        while words and words[0].lower().strip(".,") in _FILLER_WORDS:
+            words.pop(0)
+        while words and words[-1].lower().strip(".,") in _FILLER_WORDS:
+            words.pop()
+        cleaned = " ".join(words).strip()
+        if cleaned:
+            phrases.append(cleaned)
+    return phrases
+
+
+def _match_compound_requirement(requirement_name: str, profile: dict) -> Optional[dict]:
+    """Fallback for a compound requirement the whole-phrase search can't
+    match. Never invents coverage for a part that isn't found: EXPLICIT only
+    if every extracted phrase matches, INFERRED if only some do (honestly
+    naming what's still unevidenced), None if none do (falls through to the
+    LLM-assisted pass as before)."""
+    phrases = _extract_candidate_phrases(requirement_name)
+    if len(phrases) < 2:
+        return None  # not actually compound - nothing extra to try here
+
+    matched_sources: list[str] = []
+    unmatched: list[str] = []
+    for phrase in phrases:
+        hits = _search(expand_terms(phrase), _profile_haystack(profile))
+        if hits:
+            matched_sources.extend(hits)
+        else:
+            unmatched.append(phrase)
+
+    if not matched_sources:
+        return None
+    if not unmatched:
+        return {
+            "evidence_level": "EXPLICIT",
+            "confidence": 0.9,
+            "sources": matched_sources[:5],
+            "rationale": f"Matched every part of this requirement separately against the Master CV: {', '.join(phrases)}.",
+        }
+    return {
+        "evidence_level": "INFERRED",
+        "confidence": 0.6,
+        "sources": matched_sources[:5],
+        "rationale": (
+            f"Matched {', '.join(p for p in phrases if p not in unmatched)} against the Master CV, "
+            f"but found no direct evidence for: {', '.join(unmatched)}."
+        ),
+    }
+
+
 def match_requirement_deterministic(requirement_name: str, profile: dict) -> Optional[dict]:
     """Returns an evidence dict if the exact-match/synonym pass resolves this
     requirement, or None if it's inconclusive and needs the LLM-assisted pass."""
@@ -163,6 +238,8 @@ def match_requirement_deterministic(requirement_name: str, profile: dict) -> Opt
             "sources": weak_hits,
             "rationale": "Only in-progress study towards this was found, not demonstrated experience.",
         }
+
+    return _match_compound_requirement(requirement_name, profile)
 
     return None
 
