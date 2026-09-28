@@ -110,6 +110,46 @@ class ProfileItemNamesFreeTextTests(unittest.TestCase):
         }], _profile_item_names(PROFILE))
         self.assertEqual(result[0]["evidence_level"], "EXPLICIT")
 
+    def test_professional_summary_is_split_into_citable_sentences(self):
+        profile = {
+            "professional_summary": (
+                "I lead with kindness, building trust with the people I work with. "
+                "I have a strong interest in OSINT and threat research."
+            ),
+            "skills": [], "work_experience": [], "achievements": [], "training": [],
+            "projects": [], "certifications": [], "evidence": [],
+        }
+        names = _profile_item_names(profile)
+        self.assertIn("i lead with kindness, building trust with the people i work with", names)
+
+    def test_a_citation_embedding_one_summary_sentence_inside_a_wrapper_validates(self):
+        # Mirrors the exact real-world case: "Professional Summary > <one
+        # verbatim sentence from the paragraph>" - the whole paragraph is
+        # never a substring of a citation that only quotes one sentence from
+        # it, so each sentence must be its own citable unit.
+        profile = {
+            "professional_summary": (
+                "Leads with kindness, building trust with the people worked with and creating an "
+                "environment where they feel comfortable asking questions, raising concerns and "
+                "learning from mistakes. Strong interest in OSINT and threat research."
+            ),
+            "skills": [], "work_experience": [], "achievements": [], "training": [],
+            "projects": [], "certifications": [], "evidence": [],
+        }
+        result = _sanitize_evidence([{
+            "requirement": "Collaborative mindset", "evidence_level": "INFERRED",
+            "sources": ["Professional Summary > Leads with kindness, building trust with the people "
+                        "worked with and creating an environment where they feel comfortable asking "
+                        "questions, raising concerns and learning from mistakes"],
+        }], _profile_item_names(profile))
+        self.assertEqual(result[0]["evidence_level"], "INFERRED")
+
+    def test_short_summary_sentences_are_not_added(self):
+        profile = {"professional_summary": "I am direct. I am calm.", "skills": [], "work_experience": [],
+                   "achievements": [], "training": [], "projects": [], "certifications": [], "evidence": []}
+        names = _profile_item_names(profile)
+        self.assertNotIn("i am direct", names)
+
     def test_short_fragments_are_not_added(self):
         profile = {"work_experience": [{"key_responsibilities": ["IT"], "role": "X"}]}
         names = _profile_item_names(profile)
