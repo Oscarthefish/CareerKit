@@ -264,6 +264,18 @@ def _profile_item_names(profile: dict) -> set[str]:
     messy wrappers around text that IS genuinely real, regardless of the
     wrapper syntax, since the substring check below doesn't care about it."""
     names: set[str] = set()
+    summary = profile.get("professional_summary")
+    if summary:
+        # Sentence-split rather than adding the whole paragraph as one unit:
+        # the model cites a single verbatim sentence from it (e.g. "Professional
+        # Summary > Leads with kindness, building trust with..."), and a long
+        # known-name only matches when it's a substring OF the (usually
+        # shorter) citation - the whole paragraph never is, one sentence from
+        # it can be.
+        for sentence in re.split(r"(?<=[.!?])\s+", summary):
+            cleaned = sentence.strip().rstrip(".!?").lower()
+            if len(cleaned) >= _MIN_FREE_TEXT_LEN:
+                names.add(cleaned)
     for s in profile.get("skills", []):
         if s.get("name"):
             names.add(s["name"].lower())
