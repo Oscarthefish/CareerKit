@@ -160,7 +160,7 @@ function SummaryTab() {
             <div className="col-span-2">
               <p className="text-xs text-gray-400 mb-1">Target Roles</p>
               <div className="flex flex-wrap gap-1.5">
-                {profile.target_roles.map((r: string) => <span key={r} className="badge-blue">{r}</span>)}
+                {profile.target_roles.map((r: string) => <span key={r} className="badge-info">{r}</span>)}
               </div>
             </div>
           )}
@@ -207,7 +207,7 @@ function ExperienceTab() {
 
       {adding && (
         <div className="card p-5 space-y-3">
-          <h3 className="font-semibold text-sm text-gray-900">{editId ? 'Edit Role' : 'Add Role'}</h3>
+          <h3 className="text-card-title">{editId ? 'Edit Role' : 'Add Role'}</h3>
           <div className="form-row">
             <div><label className="label">Company</label><input className="input" value={form.company} onChange={set('company')} placeholder="Use a clear [placeholder] if not yet confirmed" /></div>
             <div><label className="label">Role Title</label><input className="input" value={form.role} onChange={set('role')} /></div>
@@ -360,13 +360,13 @@ function SkillsTab() {
 
       {Object.entries(grouped).map(([cat, skills]: any) => (
         <div key={cat} className="card p-5">
-          <h3 className="font-semibold text-gray-700 text-sm capitalize mb-3">{cat}</h3>
+          <h3 className="text-card-title capitalize mb-3">{cat}</h3>
           <div className="space-y-2">
             {skills.map((sk: any) => (
               <div key={sk.id} className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-900">{sk.name}</span>
-                  {sk.proficiency && <span className="badge-gray text-xs">{sk.proficiency}</span>}
+                  {sk.proficiency && <span className="badge-neutral text-xs">{sk.proficiency}</span>}
                   <ConfidenceBadge level={sk.confidence} />
                 </div>
                 <div className="flex gap-2">
@@ -436,7 +436,7 @@ function AchievementsTab() {
 
       {adding && (
         <div className="card p-5 space-y-4">
-          <h3 className="font-semibold text-gray-900 text-sm">{editId ? 'Edit Achievement' : 'New Achievement'}</h3>
+          <h3 className="text-card-title">{editId ? 'Edit Achievement' : 'New Achievement'}</h3>
 
           <div><label className="label">Title / Label</label><input className="input" value={form.title} onChange={set('title')} placeholder="e.g. Reduced MTTD by 40%" /></div>
 
@@ -501,7 +501,7 @@ function AchievementsTab() {
         <div key={item.id} className="card p-5">
           <div className="flex items-start justify-between mb-2">
             <div className="flex items-center gap-2">
-              <p className="font-semibold text-gray-900 text-sm">{item.title}</p>
+              <p className="text-card-title">{item.title}</p>
               <ConfidenceBadge level={item.confidence} />
             </div>
             <div className="flex gap-2">
@@ -514,7 +514,7 @@ function AchievementsTab() {
           )}
           {item.tools_involved?.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-2">
-              {item.tools_involved.map((t: string) => <span key={t} className="badge-gray">{t}</span>)}
+              {item.tools_involved.map((t: string) => <span key={t} className="badge-neutral">{t}</span>)}
             </div>
           )}
         </div>
@@ -590,11 +590,11 @@ function CertificationsTab() {
         <div key={item.id} className="card p-4 flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <p className="font-semibold text-sm text-gray-900">{item.name}</p>
-              {item.in_progress && <span className="badge-yellow">In Progress</span>}
-              {item.status === 'retired_legacy' && <span className="badge-gray">Legacy</span>}
+              <p className="text-card-title">{item.name}</p>
+              {item.in_progress && <span className="badge-warning">In Progress</span>}
+              {item.status === 'retired_legacy' && <span className="badge-neutral">Legacy</span>}
             </div>
-            <p className="text-xs text-gray-400 mt-0.5">
+            <p className="text-caption mt-0.5">
               {item.issuer} {item.date_obtained ? `· ${item.date_obtained}` : ''} {item.expiry_date ? `· Expires ${item.expiry_date}` : ''}
             </p>
           </div>
@@ -659,7 +659,7 @@ function ProjectsTab() {
         <div key={item.id} className="card p-4">
           <div className="flex items-start justify-between">
             <div>
-              <p className="font-semibold text-sm text-gray-900">{item.name}</p>
+              <p className="text-card-title">{item.name}</p>
               <p className="text-xs text-gray-400">{item.role} {item.date_range ? `· ${item.date_range}` : ''}</p>
               {item.description && <p className="text-sm text-gray-700 mt-1">{item.description}</p>}
             </div>
@@ -697,7 +697,7 @@ function EvidenceTab() {
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between mb-2">
-        <p className="text-sm text-gray-500">Evidence items are raw facts and examples that support your CV claims.</p>
+        <p className="text-supporting">Evidence items are raw facts and examples that support your CV claims.</p>
         <button onClick={() => { setForm(blank); setEditId(null); setAdding(true) }} className="btn-primary btn-sm flex-shrink-0">+ Add Evidence</button>
       </div>
       {adding && (
@@ -731,7 +731,7 @@ function EvidenceTab() {
           <div className="flex items-start justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <p className="font-semibold text-sm text-gray-900">{item.title}</p>
+                <p className="text-card-title">{item.title}</p>
                 <ConfidenceBadge level={item.confidence} />
               </div>
               {item.description && <p className="text-sm text-gray-600 mt-1">{item.description}</p>}
@@ -774,7 +774,7 @@ function TrainingTab() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-gray-500">
+      <p className="text-supporting">
         Training and courses, kept separate from certifications so a course is never presented as a passed exam.
       </p>
       <div className="flex justify-end">
@@ -839,11 +839,11 @@ function TrainingTab() {
           <div className="flex items-start justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <p className="font-semibold text-sm text-gray-900">{item.title}</p>
+                <p className="text-card-title">{item.title}</p>
                 <ConfidenceBadge level={item.confidence} />
-                {item.completion_status !== 'completed' && <span className="badge-yellow">{item.completion_status.replace(/_/g, ' ')}</span>}
+                {item.completion_status !== 'completed' && <span className="badge-warning">{item.completion_status.replace(/_/g, ' ')}</span>}
               </div>
-              <p className="text-xs text-gray-400 mt-0.5">{item.provider} {item.date ? `· ${item.date}` : ''}</p>
+              <p className="text-caption mt-0.5">{item.provider} {item.date ? `· ${item.date}` : ''}</p>
             </div>
             <div className="flex gap-2">
               <button onClick={() => startEdit(item)} className="btn-ghost btn-sm">Edit</button>
@@ -884,7 +884,7 @@ function CommunityTab() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-gray-500">Conferences, meetups and community involvement. Treated as professional engagement, not formal qualifications.</p>
+      <p className="text-supporting">Conferences, meetups and community involvement. Treated as professional engagement, not formal qualifications.</p>
       <div className="flex justify-end">
         <button onClick={() => { setForm(blank); setEditId(null); setAdding(true) }} className="btn-primary btn-sm">+ Add Event</button>
       </div>
@@ -930,8 +930,8 @@ function CommunityTab() {
       {items.map((item) => (
         <div key={item.id} className="card p-4 flex items-center justify-between">
           <div>
-            <p className="font-semibold text-sm text-gray-900">{item.event}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{item.location} {item.date ? `· ${item.date}` : ''} · {item.participation_type.replace(/_/g, ' ')}</p>
+            <p className="text-card-title">{item.event}</p>
+            <p className="text-caption mt-0.5">{item.location} {item.date ? `· ${item.date}` : ''} · {item.participation_type.replace(/_/g, ' ')}</p>
           </div>
           <div className="flex gap-2">
             <button onClick={() => startEdit(item)} className="btn-ghost btn-sm">Edit</button>
