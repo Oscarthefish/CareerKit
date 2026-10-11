@@ -8,6 +8,10 @@ import FileUpload from '@/components/FileUpload'
 import BannedPhrasesWidget from '@/components/BannedPhrasesWidget'
 import CVRenderer from '@/components/CVRenderer'
 import EvidenceFeedbackWidget from '@/components/EvidenceFeedbackWidget'
+import Tabs from '@/components/ui/Tabs'
+import SectionHeader from '@/components/ui/SectionHeader'
+import JobStatus, { JOB_STATUSES } from '@/components/ui/JobStatus'
+import { MatchSummary } from '@/components/ui/MatchIndicator'
 import {
   getApplication, updateApplication, analyzeJob, generateScorecard, generateJobMatch, generateCustomCV,
   generateCoverLetter, generateCVNotes, generateInterviewPrep,
@@ -18,9 +22,16 @@ import type {
   JobMatchResult, Coverage, RecommendationTier, PriorityFix, CustomCvResult,
 } from '@/lib/types'
 
-const TABS = ['Overview', 'Job Analysis', 'Job Match', 'Match Scorecard', 'Cover Letter', 'CV Notes', 'Interview Prep', 'LinkedIn', 'Notes']
+// Consolidated from the original nine: Job Analysis + Job Match + Match
+// Scorecard all answer "how do I match this job" and were confusing users
+// by showing overlapping (and, before tonight's backend fixes, sometimes
+// contradictory) views of the same evidence - now one "Match" tab. CV Notes
+// and the Custom CV generator (previously buried inside the Job Match tab)
+// are now one "CV" tab. LinkedIn folds into Cover Letter as a secondary
+// section (both are per-job outreach writing).
+const TABS = ['Overview', 'Match', 'CV', 'Cover Letter', 'Interview', 'Notes']
 
-const STATUS_OPTIONS = ['draft', 'applied', 'interviewing', 'offered', 'rejected', 'withdrawn']
+const STATUS_OPTIONS = [...JOB_STATUSES]
 
 export default function ApplicationDetailPage() {
   const { id } = useParams()
@@ -78,78 +89,55 @@ export default function ApplicationDetailPage() {
   }
 
   const title = `${app.role || 'Application'}${app.company ? ` at ${app.company}` : ''}`
+  const matchResult = app.job_match_result as JobMatchResult | null
 
   return (
     <AppShell>
       <div className="max-w-5xl mx-auto px-6 py-8">
         {/* Header */}
         <div className="mb-6">
-          <Link href="/applications" className="text-xs text-gray-400 hover:text-brand-600">← Applications</Link>
-          <div className="flex items-start justify-between mt-2">
+          <Link href="/applications" className="text-xs text-gray-400 hover:text-brand-600">← Jobs</Link>
+          <div className="flex items-start justify-between mt-2 gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
-              <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
+              <h1 className="text-page-title">{title}</h1>
+              <div className="flex items-center gap-3 mt-1 text-supporting">
                 {app.location && <span>{app.location}</span>}
                 {app.work_type && <span>· {app.work_type}</span>}
                 {app.salary_range && <span>· {app.salary_range}</span>}
               </div>
+              {matchResult && (
+                <div className="mt-2">
+                  <MatchSummary score={matchResult.job_match.overall} band={matchResult.job_match.band} />
+                </div>
+              )}
             </div>
-            <select
-              value={app.status}
-              onChange={(e) => handleStatusChange(e.target.value)}
-              className="input w-auto text-sm"
-            >
-              {STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}
-            </select>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <select
+                value={app.status}
+                onChange={(e) => handleStatusChange(e.target.value)}
+                className="input w-auto text-sm"
+              >
+                {STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}
+              </select>
+              <button onClick={() => setTab('Match')} className="btn-primary btn-sm">
+                {matchResult ? 'View Match' : 'Check Match'}
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Progress bar */}
-        <div className="flex items-center gap-2 mb-6 p-4 bg-gray-50 rounded-xl">
-          {['Analysis', 'Scorecard', 'Cover Letter', 'Interview Prep'].map((step, i) => {
-            const done = [!!app.job_analysis, !!app.match_scorecard, !!app.cover_letter, !!app.interview_prep][i]
-            return (
-              <div key={step} className="flex items-center gap-2 flex-1">
-                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
-                  done ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-400'
-                }`}>
-                  {done ? '✓' : i + 1}
-                </div>
-                <span className={`text-xs font-medium ${done ? 'text-green-700' : 'text-gray-400'}`}>{step}</span>
-                {i < 3 && <div className={`flex-1 h-px ${done ? 'bg-green-300' : 'bg-gray-200'}`} />}
-              </div>
-            )
-          })}
-        </div>
-
-        {/* Tabs */}
-        <div className="flex gap-1 mb-6 overflow-x-auto pb-1">
-          {TABS.map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
-                tab === t ? 'bg-brand-700 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:border-brand-300'
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+        <Tabs tabs={TABS} active={tab} onChange={setTab} />
 
         {/* Tab content */}
         {tab === 'Overview' && <TabOverview app={app} refresh={refresh} appId={appId} />}
-        {tab === 'Job Analysis' && <TabJobAnalysis app={app} refresh={refresh} appId={appId} />}
-        {tab === 'Job Match' && <TabJobMatch app={app} refresh={refresh} appId={appId} />}
-        {tab === 'Match Scorecard' && <TabScorecard app={app} refresh={refresh} appId={appId} />}
-        {tab === 'Cover Letter' && <TabCoverLetter app={app} refresh={refresh} appId={appId} />}
-        {tab === 'CV Notes' && <TabCVNotes app={app} refresh={refresh} appId={appId} />}
-        {tab === 'Interview Prep' && <TabInterviewPrep app={app} refresh={refresh} appId={appId} />}
-        {tab === 'LinkedIn' && <TabLinkedIn app={app} refresh={refresh} appId={appId} />}
+        {tab === 'Match' && <TabMatch app={app} refresh={refresh} appId={appId} />}
+        {tab === 'CV' && <TabCV app={app} refresh={refresh} appId={appId} />}
+        {tab === 'Cover Letter' && <TabCoverLetterGroup app={app} refresh={refresh} appId={appId} />}
+        {tab === 'Interview' && <TabInterviewPrep app={app} refresh={refresh} appId={appId} />}
         {tab === 'Notes' && (
-          <div className="card p-6">
+          <div className="surface p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-gray-900">Session Notes & Company Research</h3>
+              <h3 className="text-card-title">Session Notes & Company Research</h3>
               {!editingNotes && (
                 <button onClick={() => setEditingNotes(true)} className="btn-secondary btn-sm">Edit</button>
               )}
@@ -273,6 +261,59 @@ function TabOverview({ app, refresh, appId }: { app: JobApplication; refresh: ()
   )
 }
 
+// Consolidated "Match" tab: JD snapshot, the explainable Job Match score
+// (primary), then the narrative gap analysis from the Match Scorecard
+// (secondary) - three previously separate tabs that were really all
+// answering "how do I match this job", reusing each existing tab's working
+// internals unchanged rather than rewriting their data/API logic.
+function TabMatch({ app, refresh, appId }: { app: JobApplication; refresh: () => void; appId: number }) {
+  return (
+    <div className="space-y-8">
+      <TabJobMatch app={app} refresh={refresh} appId={appId} />
+      {app.job_analysis && (
+        <div>
+          <SectionHeader title="Job details" description="What CareerKit extracted from the job description." />
+          <TabJobAnalysis app={app} refresh={refresh} appId={appId} />
+        </div>
+      )}
+      <div>
+        <SectionHeader title="Gap analysis" description="A narrative second opinion alongside the evidence above - how to talk about this application, and what to avoid claiming." />
+        <TabScorecard app={app} refresh={refresh} appId={appId} />
+      </div>
+    </div>
+  )
+}
+
+// Consolidated "CV" tab: the evidence-based Custom CV (primary, evidence-
+// selected from the Master CV for this specific job) plus the older CV
+// Adjustment Notes / Tailored CV workflow (secondary - kept, not removed,
+// but clearly subordinate so the two don't get confused with each other).
+function TabCV({ app, refresh, appId }: { app: JobApplication; refresh: () => void; appId: number }) {
+  return (
+    <div className="space-y-8">
+      <CustomCvPanel app={app} appId={appId} refresh={refresh} />
+      {app.match_scorecard && (
+        <div>
+          <SectionHeader title="CV adjustment notes" description="An older, wording-level view of what to change in your Master CV for this role." />
+          <TabCVNotes app={app} refresh={refresh} appId={appId} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TabCoverLetterGroup({ app, refresh, appId }: { app: JobApplication; refresh: () => void; appId: number }) {
+  return (
+    <div className="space-y-8">
+      <TabCoverLetter app={app} refresh={refresh} appId={appId} />
+      <div>
+        <SectionHeader title="LinkedIn angle" description="A positioning angle for this role if you want to reach out or update your profile." />
+        <TabLinkedIn app={app} refresh={refresh} appId={appId} />
+      </div>
+    </div>
+  )
+}
+
 function TabJobAnalysis({ app, refresh, appId }: { app: JobApplication; refresh: () => void; appId: number }) {
   const analysis = app.job_analysis as JobAnalysis | null
 
@@ -327,11 +368,15 @@ function TabJobAnalysis({ app, refresh, appId }: { app: JobApplication; refresh:
   )
 }
 
+// NO_EVIDENCE is deliberately neutral, not red/danger: "no evidence found"
+// is not a failure state the user should feel alarmed by (see TabMatch's
+// framing) - it's a prompt to add real evidence or leave it, never a signal
+// to feel bad about.
 const COVERAGE_BADGE: Record<Coverage, string> = {
-  STRONG_EVIDENCE: 'badge-green',
-  PARTIAL_EVIDENCE: 'badge-yellow',
-  NO_EVIDENCE: 'badge-red',
-  UNKNOWN: 'badge-gray',
+  STRONG_EVIDENCE: 'badge-success',
+  PARTIAL_EVIDENCE: 'badge-warning',
+  NO_EVIDENCE: 'badge-neutral',
+  UNKNOWN: 'badge-neutral',
 }
 
 const TIER_BADGE: Record<RecommendationTier, string> = {
@@ -402,11 +447,18 @@ function TabJobMatch({ app, refresh, appId }: { app: JobApplication; refresh: ()
         />
       </div>
 
-      {/* Hero score */}
+      {/* Hero score - band leads (the explainable signal), percentage is
+          secondary, and a plain strong/partial/gap tally stands in for a
+          single mysterious number (see section 20 of the redesign brief) */}
       <div className="card p-6 text-center">
-        <div className="text-5xl font-bold text-brand-700">{job_match.overall}%</div>
-        <div className="text-sm font-semibold text-gray-600 mt-1">JOB MATCH · {job_match.band}</div>
-        <p className="text-xs text-gray-400 mt-3 max-w-lg mx-auto">
+        <div className="text-2xl font-semibold text-gray-900">{job_match.band}</div>
+        <div className="text-sm text-gray-500 mt-1">{job_match.overall}% estimated match</div>
+        <div className="flex items-center justify-center gap-5 mt-4 text-sm">
+          <span className="text-gray-700"><strong className="text-green-700">{requirement_coverage.filter((r) => r.coverage === 'STRONG_EVIDENCE').length}</strong> strong</span>
+          <span className="text-gray-700"><strong className="text-amber-700">{requirement_coverage.filter((r) => r.coverage === 'PARTIAL_EVIDENCE').length}</strong> partial</span>
+          <span className="text-gray-700"><strong className="text-gray-500">{requirement_coverage.filter((r) => r.coverage === 'NO_EVIDENCE').length}</strong> gaps</span>
+        </div>
+        <p className="text-xs text-gray-400 mt-4 max-w-lg mx-auto">
           CareerKit Job Match estimates how closely your CV aligns with this job description.
           Employers and ATS platforms use different methods and may not assign a comparable score.
           A high score does not guarantee an interview — aim for accurate, relevant alignment rather
@@ -558,9 +610,6 @@ function TabJobMatch({ app, refresh, appId }: { app: JobApplication; refresh: ()
           ))}
         </div>
       </div>
-
-      {/* Custom CV creation + rescan */}
-      <CustomCvPanel app={app} appId={appId} refresh={refresh} />
     </div>
   )
 }

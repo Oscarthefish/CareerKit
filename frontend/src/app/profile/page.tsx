@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import AppShell from '@/components/AppShell'
 import PageHeader from '@/components/PageHeader'
+import Tabs from '@/components/ui/Tabs'
 import TagInput from '@/components/TagInput'
 import ConfidenceBadge from '@/components/ConfidenceBadge'
 import AIButton from '@/components/AIButton'
@@ -60,21 +61,9 @@ export default function ProfilePage() {
   return (
     <AppShell>
       <div className="max-w-5xl mx-auto px-6 py-8">
-        <PageHeader title="My Profile" description="Your master profile. All AI-generated content is based on this data." />
+        <PageHeader title="Career Profile" description="Everything CareerKit knows about your professional experience. Every CV and application it generates is grounded in this data." />
 
-        <div className="flex gap-1 mb-6 overflow-x-auto pb-1">
-          {TABS.map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
-                tab === t ? 'bg-brand-700 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:border-brand-300'
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+        <Tabs tabs={TABS} active={tab} onChange={setTab} />
 
         {tab === 'Summary' && <SummaryTab />}
         {tab === 'Experience' && <ExperienceTab />}
@@ -251,22 +240,32 @@ function ExperienceTab() {
       )}
 
       {items.map((item) => (
-        <div key={item.id} className="card p-5">
+        <div key={item.id} className="card p-5 group">
           <div className="flex items-start justify-between mb-1">
             <div>
-              <p className="font-semibold text-gray-900">{item.role}</p>
-              <p className="text-sm text-gray-500">{item.company} {item.location ? `· ${item.location}` : ''}</p>
-              <p className="text-xs text-gray-400 mt-0.5">{item.start_date} - {item.is_current ? 'Present' : item.end_date}</p>
+              <p className="text-card-title">{item.role}</p>
+              <p className="text-supporting">{item.company} {item.location ? `· ${item.location}` : ''}</p>
+              <p className="text-caption mt-0.5">{item.start_date} - {item.is_current ? 'Present' : item.end_date}</p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
               <button onClick={() => startEdit(item)} className="btn-ghost btn-sm">Edit</button>
-              <button onClick={() => remove(item.id)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
+              <button onClick={() => remove(item.id)} className="text-red-400 hover:text-red-600 text-xs px-2">Remove</button>
             </div>
           </div>
           {item.description && <p className="text-sm text-gray-700 mt-2">{item.description}</p>}
+          {item.key_responsibilities?.length > 0 && (
+            <ul className="mt-2.5 space-y-1">
+              {item.key_responsibilities.map((r: string, i: number) => (
+                <li key={i} className="text-sm text-gray-700 flex gap-2">
+                  <span className="text-gray-300 flex-shrink-0">·</span>
+                  <span>{r}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           {item.technologies?.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {item.technologies.map((t: string) => <span key={t} className="badge-gray text-xs">{t}</span>)}
+            <div className="flex flex-wrap gap-1.5 mt-3">
+              {item.technologies.map((t: string) => <span key={t} className="badge-neutral">{t}</span>)}
             </div>
           )}
         </div>

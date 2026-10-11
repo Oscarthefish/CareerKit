@@ -3,23 +3,20 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import AppShell from '@/components/AppShell'
 import PageHeader from '@/components/PageHeader'
+import EmptyState from '@/components/ui/EmptyState'
+import SkeletonBlock from '@/components/ui/Skeleton'
+import JobStatus, { JOB_STATUSES, statusLabel } from '@/components/ui/JobStatus'
+import { MatchChip } from '@/components/ui/MatchIndicator'
+import { JobsIcon } from '@/components/ui/Icons'
 import { getApplications, deleteApplication } from '@/lib/api'
 import type { JobApplicationSummary } from '@/lib/types'
 
-const STATUS_COLORS: Record<string, string> = {
-  draft: 'badge-gray',
-  applied: 'badge-blue',
-  interviewing: 'badge-purple',
-  offered: 'badge-green',
-  rejected: 'badge-red',
-  withdrawn: 'badge-gray',
-}
-
-const FIT_COLORS: Record<string, string> = {
-  strong: 'text-green-700',
-  good: 'text-blue-700',
-  stretch: 'text-yellow-700',
-  weak: 'text-red-700',
+function nextAction(app: JobApplicationSummary): string | null {
+  if (!app.has_analysis) return 'Analyse this job'
+  if (!app.has_job_match) return 'See how you match'
+  if (app.status === 'interviewing' && !app.has_interview_prep) return 'Prepare for interview'
+  if (app.status === 'draft' && !app.has_cover_letter) return 'Write a cover letter'
+  return null
 }
 
 export default function ApplicationsPage() {
@@ -43,7 +40,8 @@ export default function ApplicationsPage() {
 
   const handleDelete = async (id: number, e: React.MouseEvent) => {
     e.preventDefault()
-    if (!confirm('Delete this application?')) return
+    e.stopPropagation()
+    if (!confirm('Delete this application? This cannot be undone.')) return
     await deleteApplication(id)
     setApps(apps.filter((a) => a.id !== id))
   }
@@ -52,103 +50,80 @@ export default function ApplicationsPage() {
     <AppShell>
       <div className="max-w-5xl mx-auto px-6 py-8">
         <PageHeader
-          title="Job Applications"
-          description="Each application is saved as a complete session with CV notes, cover letter, and interview prep."
-          action={
-            <Link href="/applications/new" className="btn-primary">New Application</Link>
-          }
+          title="Jobs"
+          description="Every role you're considering, with its match and current status."
+          action={<Link href="/applications/new" className="btn-primary">+ Add job</Link>}
         />
 
         {/* Filters */}
-        <div className="flex items-center gap-2 mb-6">
-          {['all', 'draft', 'applied', 'interviewing', 'offered', 'rejected'].map((status) => (
+        <div className="flex items-center gap-1.5 mb-5 overflow-x-auto">
+          {['all', ...JOB_STATUSES].map((status) => (
             <button
               key={status}
               onClick={() => setFilter(status)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                filter === status
-                  ? 'bg-brand-700 text-white'
-                  : 'bg-white text-gray-600 border border-gray-200 hover:border-brand-300'
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+                filter === status ? 'bg-brand-700 text-white' : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
-              {status === 'all' ? `All (${apps.length})` : `${status} (${apps.filter((a) => a.status === status).length})`}
+              {status === 'all' ? `All (${apps.length})` : `${statusLabel(status)} (${apps.filter((a) => a.status === status).length})`}
             </button>
           ))}
         </div>
 
         {loading ? (
-          <div className="text-gray-400 text-sm">Loading...</div>
+          <div className="surface p-6"><SkeletonBlock rows={4} /></div>
         ) : filtered.length === 0 ? (
-          <div className="card p-12 text-center">
-            <div className="text-4xl mb-4">◷</div>
-            <h2 className="text-xl font-semibold text-gray-900 mb-2">No applications yet</h2>
-            <p className="text-sm text-gray-500 mb-6">
-              Start by pasting or uploading a job description.
-            </p>
-            <Link href="/applications/new" className="btn-primary">Start New Application</Link>
+          <div className="surface">
+            {apps.length === 0 ? (
+              <EmptyState
+                icon={<JobsIcon width={32} height={32} />}
+                title="Your job search starts here"
+                description="Add a role you're considering and CareerKit can compare it with your experience, identify genuine gaps, and help prepare your application."
+                action={<Link href="/applications/new" className="btn-primary">Add your first job</Link>}
+              />
+            ) : (
+              <EmptyState title="No jobs in this view" description="Try a different filter." />
+            )}
           </div>
         ) : (
-          <div className="space-y-3">
-            {filtered.map((app) => (
-              <Link
-                key={app.id}
-                href={`/applications/${app.id}`}
-                className="card flex items-center justify-between px-5 py-4 hover:border-brand-200 transition-colors group"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
+          <div className="surface divide-y" style={{ borderColor: 'var(--border-default)' }}>
+            {filtered.map((app) => {
+              const action = nextAction(app)
+              return (
+                <Link
+                  key={app.id}
+                  href={`/applications/${app.id}`}
+                  className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-gray-50 transition-colors group"
+                >
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-gray-900 truncate">
-                      {app.role || 'Unknown Role'}
-                      {app.company ? <span className="text-gray-500 font-normal"> at {app.company}</span> : null}
+                      {app.role || 'Untitled role'}
+                      {app.company ? <span className="text-gray-500 font-normal"> · {app.company}</span> : null}
                     </p>
+                    <div className="flex items-center gap-3 text-caption mt-0.5">
+                      {app.location && <span>{app.location}</span>}
+                      {app.work_type && <span>· {app.work_type}</span>}
+                      <span>· Added {new Date(app.created_at).toLocaleDateString('en-NZ')}</span>
+                    </div>
+                    {action && <p className="text-xs text-brand-700 font-medium mt-1.5">{action} →</p>}
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-gray-400">
-                    {app.location && <span>{app.location}</span>}
-                    {app.work_type && <span>· {app.work_type}</span>}
-                    <span>· {new Date(app.created_at).toLocaleDateString('en-NZ')}</span>
+                  <div className="flex items-center gap-3 ml-4 flex-shrink-0">
+                    {app.job_match_score != null && <MatchChip score={app.job_match_score} band={app.job_match_band} />}
+                    <JobStatus status={app.status} />
+                    <button
+                      onClick={(e) => handleDelete(app.id, e)}
+                      className="text-gray-300 hover:text-red-500 text-sm opacity-0 group-hover:opacity-100 transition-opacity"
+                      aria-label="Delete application"
+                    >
+                      ✕
+                    </button>
                   </div>
-                  {/* Progress indicators */}
-                  <div className="flex items-center gap-1.5 mt-2">
-                    <Pip active={app.has_analysis} label="Analysis" />
-                    <Pip active={app.has_scorecard} label="Scorecard" />
-                    <Pip active={app.has_cover_letter} label="Cover Letter" />
-                    <Pip active={app.has_interview_prep} label="Interview Prep" />
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 ml-4">
-                  {app.job_match_score != null && <JobMatchBadge score={app.job_match_score} band={app.job_match_band} />}
-                  <span className={STATUS_COLORS[app.status] || 'badge-gray'}>{app.status}</span>
-                  <button
-                    onClick={(e) => handleDelete(app.id, e)}
-                    className="text-gray-300 hover:text-red-400 text-sm opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </Link>
-            ))}
+                </Link>
+              )
+            })}
           </div>
         )}
       </div>
     </AppShell>
-  )
-}
-
-function Pip({ active, label }: { active: boolean; label: string }) {
-  return (
-    <span title={label} className={`w-2 h-2 rounded-full ${active ? 'bg-green-400' : 'bg-gray-200'}`} />
-  )
-}
-
-function JobMatchBadge({ score, band }: { score: number; band: string | null }) {
-  const style =
-    score >= 80 ? 'bg-green-100 text-green-800' : score >= 60 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
-  return (
-    <span
-      title={band ? `Job Match · ${band}` : 'Job Match'}
-      className={`px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${style}`}
-    >
-      {score}% match
-    </span>
   )
 }

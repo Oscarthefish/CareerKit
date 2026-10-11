@@ -96,7 +96,7 @@ export default function CVPage() {
       <div className="max-w-5xl mx-auto px-6 py-8">
         <PageHeader
           title="Master CV"
-          description="Your master CV is not regenerated for every job. Update it over time as you gain new skills and experience."
+          description="Generated from your Career Profile. This is your comprehensive record, not a per-job document — a tailored, shorter CV for a specific job lives on that job's own page."
           action={
             <div className="flex items-center gap-2">
               {cvContent && (
