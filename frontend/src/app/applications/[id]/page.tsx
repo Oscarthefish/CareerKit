@@ -396,7 +396,11 @@ const SEVERITY_ICON: Record<PriorityFix['severity'], string> = {
 }
 
 function ScoreDial({ label, score }: { label: string; score: number }) {
-  const color = score >= 80 ? 'text-green-600' : score >= 60 ? 'text-yellow-600' : 'text-red-600'
+  // Low here is not an alarm-red failure state - same reasoning as
+  // MatchIndicator (see its comment): it's information to act on, not a
+  // verdict to feel bad about. Caught via an actual screenshot during
+  // visual QA, not just a code read.
+  const color = score >= 80 ? 'text-green-600' : score >= 60 ? 'text-amber-600' : 'text-gray-500'
   return (
     <div className="text-center">
       <div className={`text-3xl font-bold ${color}`}>{score}%</div>

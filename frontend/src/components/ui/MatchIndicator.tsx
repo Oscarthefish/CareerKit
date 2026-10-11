@@ -3,8 +3,15 @@
 // explainable signal); the percentage is secondary, and never presented as
 // a guarantee of anything (see CareerKit's "never invent a verdict"
 // principle - this is a UI-level expression of the same rule).
+//
+// A low score is deliberately NOT red/danger: red is reserved for a genuine
+// hard warning (e.g. DO_NOT_ADD), and a job you're a partial match for is
+// not a failure state - it's information. Confirmed via an actual
+// screenshot during visual QA that red here read exactly like the
+// alarming "you failed this JD" framing the brief explicitly said to avoid,
+// even though the underlying intent (flag low alignment) was right.
 const SCORE_STYLE = (score: number) =>
-  score >= 80 ? 'badge-success' : score >= 60 ? 'badge-warning' : 'badge-danger'
+  score >= 80 ? 'badge-success' : score >= 60 ? 'badge-warning' : 'badge-neutral'
 
 export function MatchChip({ score, band, className = '' }: { score: number; band?: string | null; className?: string }) {
   return (
@@ -18,7 +25,7 @@ export function MatchSummary({ score, band }: { score: number; band: string }) {
   const style =
     score >= 80 ? { dot: 'bg-green-500', text: 'text-green-700' }
     : score >= 60 ? { dot: 'bg-amber-500', text: 'text-amber-700' }
-    : { dot: 'bg-red-500', text: 'text-red-700' }
+    : { dot: 'bg-gray-400', text: 'text-gray-600' }
   return (
     <div className="flex items-center gap-2">
       <span className={`w-2 h-2 rounded-full ${style.dot}`} />
