@@ -8,6 +8,22 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        // Warm-tinted neutral scale (replaces Tailwind's default cool gray)
+        // so every existing gray-* utility across the app - touched or not
+        // in this pass - picks up the same foundation automatically.
+        gray: {
+          50: '#faf9f7',
+          100: '#f5f4f1',
+          200: '#e7e4df',
+          300: '#d9d5cd',
+          400: '#b5afa4',
+          500: '#9c968c',
+          600: '#807a70',
+          700: '#6b6660',
+          800: '#433f3a',
+          900: '#1f1d1a',
+          950: '#141311',
+        },
         brand: {
           50: '#f0f7ff',
           100: '#e0effe',

@@ -3,19 +3,17 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import AppShell from '@/components/AppShell'
+import JobStatus from '@/components/ui/JobStatus'
+import { MatchChip } from '@/components/ui/MatchIndicator'
+import EmptyState from '@/components/ui/EmptyState'
+import SkeletonBlock from '@/components/ui/Skeleton'
+import { JobsIcon } from '@/components/ui/Icons'
 import { getProfile, getApplications, aiHealth } from '@/lib/api'
 import type { Profile, JobApplicationSummary, AIHealth } from '@/lib/types'
 
-const STATUS_COLORS: Record<string, string> = {
-  draft: 'badge-gray',
-  applied: 'badge-blue',
-  interviewing: 'badge-purple',
-  offered: 'badge-green',
-  rejected: 'badge-red',
-  withdrawn: 'badge-gray',
-}
+const OPEN_STATUSES = ['draft', 'applied', 'interviewing']
 
-export default function Dashboard() {
+export default function Home() {
   const router = useRouter()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [applications, setApplications] = useState<JobApplicationSummary[]>([])
@@ -39,128 +37,124 @@ export default function Dashboard() {
   if (loading) {
     return (
       <AppShell>
-        <div className="flex items-center justify-center h-full">
-          <div className="text-gray-400">Loading...</div>
+        <div className="max-w-4xl mx-auto px-6 py-8">
+          <SkeletonBlock rows={4} />
         </div>
       </AppShell>
     )
   }
 
-  const recentApps = applications.slice(0, 5)
-  const activeApps = applications.filter((a) => ['applied', 'interviewing'].includes(a.status))
+  const openApps = applications.filter((a) => OPEN_STATUSES.includes(a.status))
+  const firstName = profile?.full_name?.split(' ')[0]
+
+  // Real, computable "needs attention" signals only - never invented ones
+  // the data model can't actually support (e.g. no interview date field
+  // exists, so no "interview in 2 days" claim is made).
+  const needsAnalysis = applications.filter((a) => OPEN_STATUSES.includes(a.status) && !a.has_analysis)
+  const readyToMatch = applications.filter((a) => a.has_analysis && !a.has_job_match)
+  const needsInterviewPrep = applications.filter((a) => a.status === 'interviewing' && !a.has_interview_prep)
+  const attention = [
+    ...needsInterviewPrep.map((a) => ({ app: a, action: 'Prepare for interview', tab: 'Interview Prep' })),
+    ...readyToMatch.map((a) => ({ app: a, action: 'See how you match', tab: 'Job Match' })),
+    ...needsAnalysis.map((a) => ({ app: a, action: 'Analyse this job', tab: 'Job Analysis' })),
+  ].slice(0, 5)
+
+  const stateLine = applications.length === 0
+    ? 'Add your first job to get started.'
+    : `${openApps.length} ${openApps.length === 1 ? 'application' : 'applications'} in progress${attention.length ? ` · ${attention.length} need${attention.length === 1 ? 's' : ''} your attention` : ''}.`
 
   return (
     <AppShell>
-      <div className="max-w-5xl mx-auto px-6 py-8">
-        {/* Welcome */}
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">
-            {profile?.full_name ? `Welcome back, ${profile.full_name.split(' ')[0]}` : 'Dashboard'}
-          </h1>
-          <p className="mt-1 text-gray-500 text-sm">
-            {profile?.target_roles?.length
-              ? `Targeting: ${profile.target_roles.slice(0, 3).join(', ')}`
-              : 'Set your target roles in your profile'}
-          </p>
+      <div className="max-w-4xl mx-auto px-6 py-10">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 mb-8">
+          <div>
+            <h1 className="text-page-title">{firstName ? `Welcome back, ${firstName}` : 'Welcome back'}</h1>
+            <p className="text-supporting mt-1">{stateLine}</p>
+          </div>
+          <Link href="/applications/new" className="btn-primary flex-shrink-0">+ Add job</Link>
         </div>
 
-        {/* AI Status Banner */}
+        {/* AI status */}
         {ai && (ai.status !== 'ok' || !ai.model_available) && (
-          <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm">
-            <p className="font-medium text-amber-800">Ollama is not running or the model is not loaded</p>
-            <p className="text-amber-700 mt-1">
-              Start Ollama with: <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono text-xs">ollama serve</code>
-              {' '}then load your model: <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono text-xs">ollama pull {ai.model || 'llama3'}</code>
+          <div className="mb-6 p-4 rounded-xl text-sm" style={{ background: 'var(--warning-bg)', border: '1px solid var(--warning-border)' }}>
+            <p className="font-medium" style={{ color: 'var(--warning-text)' }}>Ollama is not running or the model is not loaded</p>
+            <p className="mt-1" style={{ color: 'var(--warning-text)' }}>
+              Start Ollama with: <code className="bg-white/60 px-1.5 py-0.5 rounded font-mono text-xs">ollama serve</code>
+              {' '}then load your model: <code className="bg-white/60 px-1.5 py-0.5 rounded font-mono text-xs">ollama pull {ai.model || 'llama3'}</code>
             </p>
-            <Link href="/settings" className="text-amber-800 underline text-xs mt-1 inline-block">
-              Check settings
-            </Link>
+            <Link href="/settings" className="underline text-xs mt-1 inline-block" style={{ color: 'var(--warning-text)' }}>Check settings</Link>
           </div>
         )}
 
-        {/* Quick stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-          <StatCard label="Total Applications" value={applications.length} href="/applications" />
-          <StatCard label="Active" value={activeApps.length} href="/applications" />
-          <StatCard label="Interviews" value={applications.filter((a) => a.status === 'interviewing').length} href="/applications" />
-          <StatCard label="Offers" value={applications.filter((a) => a.status === 'offered').length} href="/applications" />
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Quick actions */}
-          <div className="lg:col-span-1">
-            <div className="card">
-              <div className="card-header">
-                <h2 className="font-semibold text-gray-900 text-sm">Quick Actions</h2>
-              </div>
-              <div className="card-body space-y-2 p-4">
-                <QuickAction href="/applications/new" label="New Job Application" desc="Start a new application" />
-                <QuickAction href="/cv" label="Master CV" desc="View or update your CV" />
-                <QuickAction href="/profile" label="Edit Profile" desc="Update skills and history" />
-                <QuickAction href="/linkedin" label="LinkedIn Builder" desc="Generate LinkedIn content" />
-                <QuickAction href="/examples" label="Upload Example CV" desc="Add a CV for style analysis" />
-              </div>
-            </div>
+        {applications.length === 0 ? (
+          <div className="surface">
+            <EmptyState
+              icon={<JobsIcon width={32} height={32} />}
+              title="Your job search starts here"
+              description="Add a role you're considering and CareerKit can compare it with your experience, identify genuine gaps, and help prepare your application."
+              action={<Link href="/applications/new" className="btn-primary">Add your first job</Link>}
+            />
           </div>
-
-          {/* Recent applications */}
-          <div className="lg:col-span-2">
-            <div className="card">
-              <div className="card-header flex items-center justify-between">
-                <h2 className="font-semibold text-gray-900 text-sm">Recent Applications</h2>
-                <Link href="/applications" className="text-xs text-brand-600 hover:underline">View all</Link>
-              </div>
-              <div className="divide-y divide-gray-50">
-                {recentApps.length === 0 ? (
-                  <div className="px-6 py-8 text-center text-sm text-gray-400">
-                    No applications yet.{' '}
-                    <Link href="/applications/new" className="text-brand-600 hover:underline">Start one</Link>
-                  </div>
-                ) : (
-                  recentApps.map((app) => (
-                    <Link key={app.id} href={`/applications/${app.id}`} className="flex items-center justify-between px-6 py-3 hover:bg-gray-50 transition-colors">
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">
-                          {app.role || 'Unknown role'}{app.company ? ` at ${app.company}` : ''}
+        ) : (
+          <div className="space-y-8">
+            {/* Attention */}
+            {attention.length > 0 && (
+              <section>
+                <h2 className="text-section-heading mb-3">Needs your attention</h2>
+                <div className="surface divide-y" style={{ borderColor: 'var(--border-default)' }}>
+                  {attention.map(({ app, action }, i) => (
+                    <Link
+                      key={`${app.id}-${i}`}
+                      href={`/applications/${app.id}`}
+                      className="flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-gray-50 transition-colors"
+                      style={{ borderColor: 'var(--border-default)' }}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {app.role || 'Untitled role'}{app.company ? ` · ${app.company}` : ''}
                         </p>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          {app.location || ''} {app.work_type ? `· ${app.work_type}` : ''}
-                        </p>
+                        <p className="text-caption mt-0.5">{action}</p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className={STATUS_COLORS[app.status] || 'badge-gray'}>
-                          {app.status}
-                        </span>
-                      </div>
+                      <span className="text-sm text-brand-700 font-medium flex-shrink-0">Open →</span>
                     </Link>
-                  ))
-                )}
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Active applications */}
+            <section>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-section-heading">Active applications</h2>
+                <Link href="/applications" className="text-sm text-brand-700 hover:underline">View all</Link>
               </div>
-            </div>
+              <div className="surface divide-y" style={{ borderColor: 'var(--border-default)' }}>
+                {(openApps.length ? openApps : applications).slice(0, 6).map((app) => (
+                  <Link
+                    key={app.id}
+                    href={`/applications/${app.id}`}
+                    className="flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {app.role || 'Untitled role'}{app.company ? ` · ${app.company}` : ''}
+                      </p>
+                      <p className="text-caption mt-0.5">
+                        {app.location || 'Location not set'}{app.work_type ? ` · ${app.work_type}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {app.job_match_score != null && <MatchChip score={app.job_match_score} band={app.job_match_band} />}
+                      <JobStatus status={app.status} />
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </section>
           </div>
-        </div>
+        )}
       </div>
     </AppShell>
-  )
-}
-
-function StatCard({ label, value, href }: { label: string; value: number; href: string }) {
-  return (
-    <Link href={href} className="card p-4 hover:border-brand-200 transition-colors">
-      <p className="text-2xl font-bold text-brand-700">{value}</p>
-      <p className="text-xs text-gray-500 mt-0.5">{label}</p>
-    </Link>
-  )
-}
-
-function QuickAction({ href, label, desc }: { href: string; label: string; desc: string }) {
-  return (
-    <Link href={href} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors group">
-      <div className="w-2 h-2 rounded-full bg-brand-400 group-hover:bg-brand-600 flex-shrink-0" />
-      <div>
-        <p className="text-sm font-medium text-gray-800 group-hover:text-brand-700">{label}</p>
-        <p className="text-xs text-gray-400">{desc}</p>
-      </div>
-    </Link>
   )
 }
