@@ -228,3 +228,25 @@ class ExampleCV(Base):
     layout_ideas = Column(Text, default="[]")  # JSON array
     raw_text = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UploadedCareerDocument(Base):
+    """A career timeline, project history or similar supplementary document
+    the candidate has uploaded for AI extraction into structured evidence.
+
+    Nothing extracted from this is written into the real profile tables
+    (Achievement/Project/Certification/Training) automatically - see
+    services/document_extraction.py and the /api/profile/documents
+    endpoints. extracted_items is a JSON array of candidate items, each
+    carrying its own "status" (pending/accepted/rejected/committed) and,
+    once committed, "committed_id" pointing at the real row it became -
+    so review state survives independently of whether anything has been
+    imported yet."""
+    __tablename__ = "uploaded_career_documents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    filename = Column(String(300), nullable=False)
+    original_filename = Column(String(300))
+    raw_text = Column(Text)
+    extracted_items = Column(Text, default="[]")  # JSON array
+    created_at = Column(DateTime, default=datetime.utcnow)

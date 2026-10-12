@@ -6,6 +6,7 @@ import Tabs from '@/components/ui/Tabs'
 import TagInput from '@/components/TagInput'
 import ConfidenceBadge from '@/components/ConfidenceBadge'
 import AIButton from '@/components/AIButton'
+import EmptyState from '@/components/ui/EmptyState'
 import {
   getProfile, updateProfile, getWorkExperience, createWorkExperience, updateWorkExperience, deleteWorkExperience,
   getSkills, createSkill, updateSkill, deleteSkill,
@@ -16,9 +17,11 @@ import {
   getStyle, updateStyle,
   getTraining, createTraining, updateTraining, deleteTraining,
   getCommunity, createCommunity, updateCommunity, deleteCommunity,
+  getCareerDocuments, getCareerDocument, uploadCareerDocument, updateCareerDocumentItem,
+  commitCareerDocument, deleteCareerDocument,
 } from '@/lib/api'
 
-const TABS = ['Summary', 'Experience', 'Skills', 'Training', 'Community', 'Achievements', 'Certifications', 'Projects', 'Evidence', 'Style']
+const TABS = ['Summary', 'Experience', 'Skills', 'Training', 'Community', 'Achievements', 'Certifications', 'Projects', 'Evidence', 'Style', 'Import']
 
 const CONFIDENCE_OPTIONS = [
   { value: 'confirmed_hands_on', label: 'Confirmed hands-on' },
@@ -92,6 +95,7 @@ export default function ProfilePage() {
         {tab === 'Projects' && <ProjectsTab />}
         {tab === 'Evidence' && <EvidenceTab />}
         {tab === 'Style' && <StyleTab />}
+        {tab === 'Import' && <ImportTab />}
       </div>
     </AppShell>
   )
@@ -1026,6 +1030,207 @@ function StyleTab() {
       <TagInput value={style.preferred_phrases || []} onChange={(v) => setStyleData({ ...style, preferred_phrases: v })} label="Preferred Phrases / Style Examples" placeholder="Add example..." />
       <div><label className="label">Additional Notes</label><textarea className="textarea" rows={3} value={style.notes || ''} onChange={set('notes')} placeholder="Any other writing preferences..." /></div>
       <button onClick={save} disabled={saving} className="btn-primary">{saving ? 'Saving...' : 'Save Preferences'}</button>
+    </div>
+  )
+}
+
+const KIND_LABELS: Record<string, string> = {
+  achievement: 'Achievement', project: 'Project', certification: 'Certification', training: 'Training',
+}
+
+function ItemReviewCard({ item, docId, onChange }: { item: any; docId: number; onChange: () => void }) {
+  const [busy, setBusy] = useState(false)
+
+  const label = item.title || item.name || '(untitled)'
+  const detail = [item.situation, item.action, item.result, item.description, item.outcomes]
+    .filter(Boolean).join(' ')
+
+  const setStatus = async (status: string) => {
+    setBusy(true)
+    try { await updateCareerDocumentItem(docId, item.local_id, { status }); onChange() }
+    finally { setBusy(false) }
+  }
+
+  const setField = async (field: string, value: string) => {
+    setBusy(true)
+    try { await updateCareerDocumentItem(docId, item.local_id, { fields: { [field]: value } }); onChange() }
+    finally { setBusy(false) }
+  }
+
+  const committed = item.status === 'committed'
+
+  return (
+    <div className="card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="badge-neutral">{KIND_LABELS[item.kind] || item.kind}</span>
+            <p className="text-card-title truncate">{label}</p>
+            <ConfidenceBadge level={item.confidence} />
+          </div>
+          {detail && <p className="text-sm text-gray-600 mt-1">{detail}</p>}
+          <p className="text-xs text-gray-400 italic mt-1">"{item.source_quote}"</p>
+          {item.possible_duplicate && (
+            <p className="text-caption mt-1 text-amber-700">
+              Looks similar to {item.possible_duplicate.id != null ? 'an item already in your profile' : 'another item in this upload'}: "{item.possible_duplicate.title}" ({Math.round(item.possible_duplicate.overlap * 100)}% word overlap)
+            </p>
+          )}
+        </div>
+        <div className="flex-shrink-0">
+          {committed && <span className="badge-success">Added to profile</span>}
+          {item.status === 'accepted' && <span className="badge-info">Accepted</span>}
+          {item.status === 'rejected' && <span className="badge-neutral">Rejected</span>}
+        </div>
+      </div>
+
+      {!committed && (
+        <div className="flex items-center gap-3 mt-3 pt-3 border-t border-gray-100 flex-wrap">
+          <div>
+            <label className="label">Confidence</label>
+            <ConfidenceSelect value={item.confidence} onChange={(e) => setField('confidence', e.target.value)} />
+          </div>
+          {item.kind === 'achievement' && (
+            <div>
+              <label className="label">Ownership</label>
+              <OwnershipSelect value={item.ownership || ''} onChange={(e) => setField('ownership', e.target.value)} />
+            </div>
+          )}
+          <div className="flex gap-2 ml-auto">
+            {item.status !== 'accepted' && (
+              <button onClick={() => setStatus('accepted')} disabled={busy} className="btn-primary btn-sm">Accept</button>
+            )}
+            {item.status !== 'rejected' && (
+              <button onClick={() => setStatus('rejected')} disabled={busy} className="btn-ghost btn-sm">Reject</button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DocumentReview({ doc, onChange }: { doc: any; onChange: () => void }) {
+  const [committing, setCommitting] = useState(false)
+  const acceptedCount = doc.items.filter((i: any) => i.status === 'accepted').length
+
+  const commit = async () => {
+    setCommitting(true)
+    try { await commitCareerDocument(doc.id); onChange() }
+    finally { setCommitting(false) }
+  }
+
+  return (
+    <div className="space-y-3">
+      {doc.items.length === 0 ? (
+        <p className="text-supporting">Nothing extractable was found in this document.</p>
+      ) : (
+        doc.items.map((item: any) => (
+          <ItemReviewCard key={item.local_id} item={item} docId={doc.id} onChange={onChange} />
+        ))
+      )}
+      {acceptedCount > 0 && (
+        <button onClick={commit} disabled={committing} className="btn-primary btn-sm">
+          {committing ? 'Adding to profile...' : `Add ${acceptedCount} accepted item${acceptedCount === 1 ? '' : 's'} to profile`}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function ImportTab() {
+  const [docs, setDocs] = useState<any[]>([])
+  const [expanded, setExpanded] = useState<Record<number, any>>({})
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState('')
+
+  const load = () => getCareerDocuments().then((r: any) => setDocs(r))
+  useEffect(() => { load() }, [])
+
+  const loadDoc = async (id: number) => {
+    const full: any = await getCareerDocument(id)
+    setExpanded((e) => ({ ...e, [id]: full }))
+  }
+
+  const toggle = (id: number) => {
+    if (expanded[id]) {
+      setExpanded((e) => { const n = { ...e }; delete n[id]; return n })
+    } else {
+      loadDoc(id)
+    }
+  }
+
+  const handleUpload = async (e: any) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setError('')
+    setUploading(true)
+    try {
+      const result: any = await uploadCareerDocument(file)
+      await load()
+      setExpanded((ex) => ({ ...ex, [result.id]: result }))
+    } catch (err: any) {
+      setError(err.message || 'Upload failed')
+    } finally {
+      setUploading(false)
+      e.target.value = ''
+    }
+  }
+
+  const remove = async (id: number) => {
+    if (!confirm('Delete this upload? Any already-imported items stay in your profile, but review history for it is removed.')) return
+    await deleteCareerDocument(id)
+    setExpanded((e) => { const n = { ...e }; delete n[id]; return n })
+    load()
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="card p-5">
+        <h3 className="text-card-title mb-1">Import from a document</h3>
+        <p className="text-supporting mb-4">
+          Upload a career timeline, project history, or detailed achievement record. CareerKit reads it and
+          proposes achievements, projects, certifications and training it finds — nothing is added to your
+          profile until you review and accept each one below.
+        </p>
+        <label className="btn-primary btn-sm inline-block cursor-pointer">
+          {uploading ? 'Reading and extracting...' : 'Upload document'}
+          <input type="file" accept=".pdf,.docx,.txt,.md,.markdown" onChange={handleUpload} disabled={uploading} className="hidden" />
+        </label>
+        {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
+      </div>
+
+      {docs.length === 0 && !uploading && (
+        <EmptyState title="No documents uploaded yet" description="Upload a career timeline or project history to pull in evidence not already captured in your profile." />
+      )}
+
+      {docs.map((doc) => {
+        const full = expanded[doc.id]
+        const pendingCount = doc.items.filter((i: any) => i.status === 'pending').length
+        const committedCount = doc.items.filter((i: any) => i.status === 'committed').length
+        return (
+          <div key={doc.id} className="card p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-card-title">{doc.original_filename}</p>
+                <p className="text-caption mt-0.5">
+                  {doc.items.length} item{doc.items.length === 1 ? '' : 's'} found
+                  {pendingCount > 0 ? ` · ${pendingCount} awaiting review` : ''}
+                  {committedCount > 0 ? ` · ${committedCount} added to profile` : ''}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => toggle(doc.id)} className="btn-ghost btn-sm">{full ? 'Hide' : 'Review'}</button>
+                <button onClick={() => remove(doc.id)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
+              </div>
+            </div>
+            {full && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <DocumentReview doc={full} onChange={() => { loadDoc(doc.id); load() }} />
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

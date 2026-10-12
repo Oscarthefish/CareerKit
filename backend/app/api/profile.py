@@ -1,19 +1,24 @@
 import json
+import tempfile
+from pathlib import Path
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..models.profile import (
     Profile, WorkExperience, Skill, Certification,
     Achievement, Project, EvidenceItem, StylePreferences,
-    Training, CommunityInvolvement
+    Training, CommunityInvolvement, UploadedCareerDocument
 )
 from ..services.profile_service import get_or_create_profile, get_or_create_style, get_banned_phrases_instruction
+from ..services.document_extraction import find_possible_duplicate, find_batch_duplicate, commit_item
 from ..ai.provider_factory import get_provider
 from ..services.prompt_service import fill_prompt
+from ..parsers.router import extract_text, SUPPORTED_EXTENSIONS
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
+CAREER_DOC_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 # ---------- Profile ----------
@@ -650,3 +655,151 @@ def update_style(body: StyleUpdate, db: Session = Depends(get_db)):
         "example_bullets": json.loads(s.example_bullets or "[]"),
         "notes": s.notes,
     }
+
+
+# ---------- Career Documents (upload -> AI extraction -> reviewed import) ----------
+#
+# Nothing extracted here reaches the real profile tables automatically.
+# Upload runs extraction and stores candidate items with status "pending";
+# the user reviews each one (editing fields, accepting or rejecting) via the
+# item PUT endpoint, and only an explicit commit call creates real
+# Achievement/Project/Certification/Training rows - see
+# services/document_extraction.py for the field mapping and the
+# deterministic (non-AI) duplicate check run against existing data at
+# upload time.
+
+def _serialize_career_document(row: UploadedCareerDocument) -> dict:
+    return {
+        "id": row.id,
+        "filename": row.filename,
+        "original_filename": row.original_filename,
+        "items": json.loads(row.extracted_items or "[]"),
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@router.get("/documents")
+def list_career_documents(db: Session = Depends(get_db)):
+    rows = db.query(UploadedCareerDocument).order_by(UploadedCareerDocument.id.desc()).all()
+    return [_serialize_career_document(r) for r in rows]
+
+
+@router.get("/documents/{doc_id}")
+def get_career_document(doc_id: int, db: Session = Depends(get_db)):
+    row = db.query(UploadedCareerDocument).filter(UploadedCareerDocument.id == doc_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    return _serialize_career_document(row)
+
+
+@router.post("/documents/upload")
+async def upload_career_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    filename = file.filename or ""
+    suffix = Path(filename).suffix.lower()
+    if suffix not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Supported: {', '.join(SUPPORTED_EXTENSIONS)}"
+        )
+
+    content = await file.read(CAREER_DOC_MAX_UPLOAD_BYTES + 1)
+    if len(content) > CAREER_DOC_MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File is larger than the 10 MB upload limit")
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+    try:
+        raw_text = extract_text(tmp_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    if not raw_text.strip():
+        raise HTTPException(status_code=400, detail="No extractable text found in this file.")
+
+    prompt = fill_prompt("career_document_extraction", DOCUMENT_TEXT=raw_text[:12000])
+    provider = get_provider()
+    result = await provider.generate_json(prompt, required_keys=["items"])
+
+    items = []
+    for i, raw_item in enumerate(result.get("items", [])):
+        if not isinstance(raw_item, dict) or raw_item.get("kind") not in ("achievement", "project", "certification", "training"):
+            continue
+        label = raw_item.get("title") or raw_item.get("name")
+        item = dict(raw_item)
+        item["local_id"] = i
+        item["status"] = "pending"
+        item["committed_id"] = None
+        item["possible_duplicate"] = (
+            find_batch_duplicate(item["kind"], label, items)
+            or find_possible_duplicate(db, item["kind"], label)
+        )
+        items.append(item)
+
+    row = UploadedCareerDocument(
+        filename=Path(filename).stem,
+        original_filename=filename,
+        raw_text=raw_text[:20000],
+        extracted_items=json.dumps(items),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _serialize_career_document(row)
+
+
+class CareerDocumentItemUpdate(BaseModel):
+    status: Optional[str] = None  # pending | accepted | rejected
+    fields: Optional[dict] = None  # edited values to merge into the item before commit
+
+
+@router.put("/documents/{doc_id}/items/{local_id}")
+def update_career_document_item(doc_id: int, local_id: int, body: CareerDocumentItemUpdate, db: Session = Depends(get_db)):
+    row = db.query(UploadedCareerDocument).filter(UploadedCareerDocument.id == doc_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    items = json.loads(row.extracted_items or "[]")
+    for item in items:
+        if item.get("local_id") == local_id:
+            if item.get("status") == "committed":
+                raise HTTPException(status_code=400, detail="This item has already been imported and can't be edited.")
+            if body.fields:
+                item.update(body.fields)
+            if body.status:
+                item["status"] = body.status
+            break
+    else:
+        raise HTTPException(status_code=404, detail="Item not found")
+    row.extracted_items = json.dumps(items)
+    db.commit()
+    return _serialize_career_document(row)
+
+
+@router.post("/documents/{doc_id}/commit")
+def commit_career_document(doc_id: int, db: Session = Depends(get_db)):
+    row = db.query(UploadedCareerDocument).filter(UploadedCareerDocument.id == doc_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    items = json.loads(row.extracted_items or "[]")
+    committed = 0
+    for item in items:
+        if item.get("status") != "accepted":
+            continue
+        new_id = commit_item(db, item, row.original_filename or row.filename)
+        if new_id is not None:
+            item["status"] = "committed"
+            item["committed_id"] = new_id
+            committed += 1
+    row.extracted_items = json.dumps(items)
+    db.commit()
+    return {"committed": committed, **_serialize_career_document(row)}
+
+
+@router.delete("/documents/{doc_id}")
+def delete_career_document(doc_id: int, db: Session = Depends(get_db)):
+    row = db.query(UploadedCareerDocument).filter(UploadedCareerDocument.id == doc_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}

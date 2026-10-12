@@ -160,6 +160,45 @@ export interface ExampleCV {
   created_at: string
 }
 
+export interface ExtractedCareerItem {
+  local_id: number
+  kind: 'achievement' | 'project' | 'certification' | 'training'
+  source_quote: string
+  confidence: string
+  status: 'pending' | 'accepted' | 'rejected' | 'committed'
+  committed_id: number | null
+  possible_duplicate: { id?: number; local_id?: number; title: string; overlap: number } | null
+  title?: string
+  name?: string
+  situation?: string
+  action?: string
+  result?: string
+  measurable_outcome?: string
+  tools_involved?: string[]
+  employer?: string
+  date_range?: string
+  ownership?: string | null
+  description?: string
+  role?: string
+  technologies?: string[]
+  outcomes?: string
+  url?: string
+  issuer?: string
+  date_obtained?: string
+  in_progress?: boolean
+  provider?: string
+  date?: string
+  completion_status?: string
+}
+
+export interface CareerDocument {
+  id: number
+  filename: string
+  original_filename: string
+  items: ExtractedCareerItem[]
+  created_at: string
+}
+
 export interface JobApplication {
   id: number
   company: string | null
