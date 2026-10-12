@@ -199,6 +199,14 @@ export interface CareerDocument {
   created_at: string
 }
 
+export interface Clarification {
+  id: number
+  applies_to: string
+  statement: string
+  created_at: string
+  updated_at: string
+}
+
 export interface JobApplication {
   id: number
   company: string | null

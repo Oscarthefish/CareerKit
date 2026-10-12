@@ -210,6 +210,27 @@ class StylePreferences(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class Clarification(Base):
+    """A factual correction the candidate makes about their own experience,
+    in their own words - deliberately separate from StylePreferences above,
+    which is about HOW things are written (tone, phrasing), not WHAT is
+    true. E.g. "I participated in the ransomware response but was never
+    Incident Commander", or "my Windows auth investigation experience was
+    historical, not recent".
+
+    applies_to is required and free text on purpose: every clarification
+    must name what it's about, so prompts can apply it only there rather
+    than as an unrestricted global claim about unrelated experience (the
+    specific failure mode the brief this feature came from calls out)."""
+    __tablename__ = "clarifications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    applies_to = Column(String(300), nullable=False)
+    statement = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class ExampleCV(Base):
     __tablename__ = "example_cvs"
 

@@ -136,6 +136,14 @@ export const commitCareerDocument = (docId: number) =>
 export const deleteCareerDocument = (docId: number) =>
   request(`/api/profile/documents/${docId}`, { method: 'DELETE' })
 
+export const getClarifications = () => request('/api/profile/clarifications')
+export const createClarification = (data: object) =>
+  request('/api/profile/clarifications', { method: 'POST', body: JSON.stringify(data) })
+export const updateClarification = (id: number, data: object) =>
+  request(`/api/profile/clarifications/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const deleteClarification = (id: number) =>
+  request(`/api/profile/clarifications/${id}`, { method: 'DELETE' })
+
 // CV
 export const getCurrentCV = () => request('/api/cv/current')
 export const getCVVersions = () => request('/api/cv/versions')

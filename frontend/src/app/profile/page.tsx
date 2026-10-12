@@ -19,9 +19,10 @@ import {
   getCommunity, createCommunity, updateCommunity, deleteCommunity,
   getCareerDocuments, getCareerDocument, uploadCareerDocument, updateCareerDocumentItem,
   commitCareerDocument, deleteCareerDocument,
+  getClarifications, createClarification, updateClarification, deleteClarification,
 } from '@/lib/api'
 
-const TABS = ['Summary', 'Experience', 'Skills', 'Training', 'Community', 'Achievements', 'Certifications', 'Projects', 'Evidence', 'Style', 'Import']
+const TABS = ['Summary', 'Experience', 'Skills', 'Training', 'Community', 'Achievements', 'Certifications', 'Projects', 'Evidence', 'Clarifications', 'Style', 'Import']
 
 const CONFIDENCE_OPTIONS = [
   { value: 'confirmed_hands_on', label: 'Confirmed hands-on' },
@@ -94,6 +95,7 @@ export default function ProfilePage() {
         {tab === 'Certifications' && <CertificationsTab />}
         {tab === 'Projects' && <ProjectsTab />}
         {tab === 'Evidence' && <EvidenceTab />}
+        {tab === 'Clarifications' && <ClarificationsTab />}
         {tab === 'Style' && <StyleTab />}
         {tab === 'Import' && <ImportTab />}
       </div>
@@ -779,6 +781,76 @@ function EvidenceTab() {
               {item.outcome && <p className="text-xs text-gray-400 mt-1">Outcome: {item.outcome}</p>}
             </div>
             <div className="flex gap-2">
+              <button onClick={() => startEdit(item)} className="btn-ghost btn-sm">Edit</button>
+              <button onClick={() => remove(item.id)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ClarificationsTab() {
+  const [items, setItems] = useState<any[]>([])
+  const [adding, setAdding] = useState(false)
+  const [editId, setEditId] = useState<number | null>(null)
+  const blank = { applies_to: '', statement: '' }
+  const [form, setForm] = useState<any>(blank)
+
+  const load = () => getClarifications().then((r: any) => setItems(r))
+  useEffect(() => { load() }, [])
+
+  const set = (k: string) => (e: any) => setForm({ ...form, [k]: e.target.value })
+
+  const save = async () => {
+    if (editId) { await updateClarification(editId, form) } else { await createClarification(form) }
+    setAdding(false); setEditId(null); setForm(blank); load()
+  }
+
+  const startEdit = (item: any) => { setForm({ applies_to: item.applies_to, statement: item.statement }); setEditId(item.id); setAdding(true) }
+  const remove = async (id: number) => { if (confirm('Remove this clarification?')) { await deleteClarification(id); load() } }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between mb-2">
+        <p className="text-supporting max-w-2xl">
+          Corrections you make yourself about your own experience — in your own words. Each one is scoped to
+          something specific, so CareerKit applies it only there, never as a blanket claim about unrelated
+          experience. For example: "I took part in the ransomware response but was never Incident Commander."
+        </p>
+        <button onClick={() => { setForm(blank); setEditId(null); setAdding(true) }} className="btn-primary btn-sm flex-shrink-0">+ Add Clarification</button>
+      </div>
+
+      {adding && (
+        <div className="card p-5 space-y-3">
+          <div>
+            <label className="label">What does this clarify?</label>
+            <input className="input" value={form.applies_to} onChange={set('applies_to')} placeholder="e.g. Ransomware response achievement, or Cortex XDR migration" />
+          </div>
+          <div>
+            <label className="label">The clarification, in your own words</label>
+            <textarea className="textarea" rows={3} value={form.statement} onChange={set('statement')} placeholder="e.g. I took part in the response but was never formally Incident Commander." />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={save} className="btn-primary btn-sm">Save</button>
+            <button onClick={() => { setAdding(false); setEditId(null) }} className="btn-ghost btn-sm">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {items.length === 0 && !adding && (
+        <EmptyState title="No clarifications yet" description="Add one when CareerKit's phrasing of something needs correcting, or to pre-empt a mix-up before it happens." />
+      )}
+
+      {items.map((item) => (
+        <div key={item.id} className="card p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-card-title">{item.applies_to}</p>
+              <p className="text-sm text-gray-700 mt-1">{item.statement}</p>
+            </div>
+            <div className="flex gap-2 flex-shrink-0">
               <button onClick={() => startEdit(item)} className="btn-ghost btn-sm">Edit</button>
               <button onClick={() => remove(item.id)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
             </div>
