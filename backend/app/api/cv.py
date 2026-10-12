@@ -596,30 +596,62 @@ def _force_correct_platforms_and_tools(content: str, tools_lines: list[str]) -> 
         content = leak_pattern.sub(lambda m: m.group(1), content, count=1)
 
     correct_block = "**Platforms & Tools:**\n" + "\n".join(tools_lines)
-    # Matches the "**Platforms & Tools:**" line plus every line straight
-    # after it that isn't itself a bold label or a heading — covers both
-    # the old single-paragraph layout and this new multi-line one.
+
+    # Ensure a single, correctly-ordered, correctly-valued "**Platforms &
+    # Tools:**" block exists - whatever was actually under that label
+    # (right, wrong, truncated, merged) gets replaced wholesale, matching
+    # the label line plus every line straight after it that isn't itself a
+    # bold label or a heading (covers both the old single-paragraph layout
+    # and this new multi-line one).
     pattern = re.compile(r"^\*\*Platforms & Tools:\*\*.*(?:\n(?!\*\*|##).*)*", re.MULTILINE)
-    if pattern.search(content):
-        return pattern.sub(lambda m: correct_block, content, count=1)
-
     ops_pattern = re.compile(r"^\*\*Security Operations & Incident Response:\*\*.*$", re.MULTILINE)
-    if ops_pattern.search(content):
-        return ops_pattern.sub(lambda m: m.group(0) + "\n" + correct_block, content, count=1)
-
     heading_pattern = re.compile(r"^## KEY SKILLS\s*$", re.MULTILINE)
-    return heading_pattern.sub(lambda m: m.group(0) + "\n" + correct_block, content, count=1)
+    if pattern.search(content):
+        content = pattern.sub(lambda m: correct_block, content, count=1)
+    elif ops_pattern.search(content):
+        content = ops_pattern.sub(lambda m: m.group(0) + "\n" + correct_block, content, count=1)
+    else:
+        content = heading_pattern.sub(lambda m: m.group(0) + "\n" + correct_block, content, count=1)
+
+    # The model has also been observed dumping the whole tool list a SECOND
+    # time, unlabelled, elsewhere in KEY SKILLS - in practice straight after
+    # the "## KEY SKILLS" heading, before anything else - in addition to the
+    # correctly labelled copy just ensured above, and NOT necessarily in the
+    # same internal order (two different passes over the same category
+    # list, each ordered differently - a single contiguous same-order block
+    # match would miss it). Strip every standalone occurrence of each
+    # individual line, regardless of order or position - protecting the one
+    # correct copy just inserted with a placeholder first, since its lines
+    # are themselves exact matches and would otherwise be stripped right
+    # back out along with the stray ones.
+    sentinel = "\x00PLATFORMS_AND_TOOLS_BLOCK\x00"
+    content = content.replace(correct_block, sentinel, 1)
+    for line in tools_lines:
+        content = re.sub(r"\n" + re.escape(line) + r"(?=\n|\Z)", "", content)
+    content = re.sub(r"\n\*\*Platforms & Tools:\*\*(?=\n|\Z)", "", content)
+    return content.replace(sentinel, correct_block, 1)
 
 
 _TERMINOLOGY_PAREN_PATTERN = re.compile(r"\(([^)]+)\)")
+_CONSECUTIVE_CAPS_PATTERN = re.compile(r"\b[A-Z][a-zA-Z0-9]*(?:\s+[A-Z][a-zA-Z0-9]*)+\b")
 
 
 def _candidate_product_names(jd_terminology: list[str]) -> list[str]:
     """Pulls likely specific product/platform names out of JD requirement
-    strings like "Experience Building Automations in a SOAR Platform
-    (Tines)" - the parenthetical is almost always the actual product name a
-    JD names alongside a general capability. Short/trivial fragments are
-    dropped to avoid flagging something like "(NZ)" or "(e.g.)"."""
+    strings. Two patterns, both observed causing a real hallucination:
+    - A parenthetical alongside a general capability, e.g. "Experience
+      Building Automations in a SOAR Platform (Tines)" - the parenthetical
+      is almost always the actual product name. Short/trivial fragments are
+      dropped to avoid flagging something like "(NZ)" or "(e.g.)".
+    - A multi-word Title Case product name named directly in the text with
+      no parentheses, e.g. "Advanced experience with SIEM platforms such as
+      Microsoft Sentinel or Splunk" - "Microsoft Sentinel" was hallucinated
+      into a real CV's Professional Profile ("well-versed in... Microsoft
+      Sentinel") despite the candidate having zero evidence for it, because
+      the parenthetical-only check above never looked at this phrasing.
+      Requiring 2+ consecutive capitalised words (not just one) keeps this
+      safe against flagging an ordinary capitalised word at the start of a
+      sentence (e.g. "Advanced") as a false candidate."""
     names: list[str] = []
     for term in jd_terminology or []:
         for match in _TERMINOLOGY_PAREN_PATTERN.findall(term):
@@ -628,6 +660,7 @@ def _candidate_product_names(jd_terminology: list[str]) -> list[str]:
                     piece = piece.strip()
                     if len(piece) > 2 and not piece.lower().startswith("e.g"):
                         names.append(piece)
+        names.extend(_CONSECUTIVE_CAPS_PATTERN.findall(term))
     return names
 
 
