@@ -44,6 +44,20 @@ def normalise_confidence(value: str | None) -> str:
     return LEGACY_CONFIDENCE_MAP.get(value, value)
 
 
+# How directly the candidate owned a piece of work, independent of how
+# confident we are the work happened at all (CONFIDENCE_LEVELS above) and how
+# recently (dates, handled separately). Exists specifically so a CV writer -
+# human or AI - has a real, structured signal for "contributed to" vs "led",
+# rather than inferring ownership tone from free-text action/result prose
+# alone. Ordered from strongest claim of individual ownership to weakest.
+OWNERSHIP_LEVELS = [
+    "led",                       # personally led or owned the work
+    "significant_contributor",   # a major, named technical role, not the sole/named lead
+    "collaborative",             # a genuine hands-on part of a team effort, no individual lead claim
+    "assisted",                  # a supporting role; credit for the main work sits elsewhere
+    "observed",                  # aware of or adjacent to the work, minimal hands-on involvement
+]
+
 # Who is allowed to see a piece of career data.
 CONFIDENTIALITY_LEVELS = [
     "public",           # safe for a public CV, LinkedIn, or website

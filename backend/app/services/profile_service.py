@@ -194,7 +194,8 @@ def compact_profile_for_prompt(summary: dict) -> dict:
                 "action": a.get("action"), "result": a.get("result"),
                 "tools_involved": a.get("tools_involved", []),
                 "skills_demonstrated": a.get("skills_demonstrated", []),
-                "confidence": a.get("confidence")}
+                "confidence": a.get("confidence"),
+                "ownership": a.get("ownership")}
 
     return {
         "professional_summary": summary.get("professional_summary"),
@@ -360,6 +361,9 @@ def build_profile_summary(db: Session, mode: str = DEFAULT_MODE) -> dict:
                 "skills_demonstrated": json.loads(a.skills_demonstrated or "[]"),
                 "measurable_outcome": a.measurable_outcome,
                 "confidence": normalise_confidence(a.confidence),
+                "ownership": a.ownership,
+                "employer": a.employer,
+                "date_range": a.date_range,
                 "bullet_strong": a.bullet_strong,
             }
             for a in achievements
@@ -383,6 +387,7 @@ def build_profile_summary(db: Session, mode: str = DEFAULT_MODE) -> dict:
                 "skills_demonstrated": json.loads(ev.skills_demonstrated or "[]"),
                 "outcome": ev.outcome,
                 "confidence": normalise_confidence(ev.confidence),
+                "ownership": ev.ownership,
             }
             for ev in evidence
         ],
