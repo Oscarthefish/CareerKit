@@ -21,21 +21,65 @@ def _is_education(title: str) -> bool:
     return any(k in t for k in _EDUCATION_KEYWORDS)
 
 
+#   Each skill's own tool_category (e.g. "DNS Security", "WAF", "EDR / XDR")
+# is a fine-grained, free-text tag the user sets per tool - useful for data
+# entry, but listing one CV line per such tag produces exactly the "long
+# inventory" look the candidate explicitly doesn't want: 14 single-line
+# categories instead of a handful of readable, functionally-grouped ones.
+# This maps each known fine-grained category onto a small set of broader
+# functional groups a reader actually scans for (what does this person use
+# for detection vs network vs intel work), in a fixed display order so the
+# most central categories (SIEM, endpoint) always lead. A tag that isn't in
+# this map falls back to "Other Tools" rather than being silently dropped -
+# new/unusual tool_category values the user adds later still show up
+# somewhere, just not pre-sorted into one of the named groups.
+_TOOL_FUNCTIONAL_GROUPS: dict[str, str] = {
+    "siem": "SIEM & Investigation",
+    "case management": "SIEM & Investigation",
+    "security operations platforms": "SIEM & Investigation",
+    "edr / xdr": "Endpoint & Detection",
+    "endpoint protection": "Endpoint & Detection",
+    "deception technology": "Endpoint & Detection",
+    "dlp": "Endpoint & Detection",
+    "firewalls": "Network, DNS & Web",
+    "waf": "Network, DNS & Web",
+    "dns security": "Network, DNS & Web",
+    "threat intelligence / osint": "Threat Intelligence & Supporting Tools",
+    "vulnerability scanning": "Threat Intelligence & Supporting Tools",
+    "email security": "Threat Intelligence & Supporting Tools",
+    "password management": "Identity & Access",
+}
+_TOOL_FUNCTIONAL_GROUP_ORDER = [
+    "SIEM & Investigation",
+    "Endpoint & Detection",
+    "Network, DNS & Web",
+    "Threat Intelligence & Supporting Tools",
+    "Identity & Access",
+    "Other Tools",
+]
+
+
+def _functional_group_for(tool_category: str | None) -> str:
+    return _TOOL_FUNCTIONAL_GROUPS.get((tool_category or "").strip().lower(), "Other Tools")
+
+
 def _platforms_and_tools_lines(tool_skills: list["Skill"]) -> list[str]:
-    """Group category="tool" skills by their tool_category into one deterministic
-    "Category: Product A, Product B" line per category, sorted for stable output.
-    Built in code rather than left to the model — it kept fabricating a plausible
-    second vendor (e.g. adding "Cisco ASA" next to Palo Alto), dropping real
-    categories (Nessus, Maltego), and duplicating entries when asked to assemble
-    this itself. The caller force-inserts these lines verbatim after generation
-    rather than trusting the model to reproduce the layout, so the list form here
-    (one category per line, as the user prefers) is safe regardless of whether
-    the model itself could reliably lay it out that way."""
+    """Group category="tool" skills by functional group (see
+    _TOOL_FUNCTIONAL_GROUPS above) into one deterministic "Group: Product A,
+    Product B" line per group, in a fixed, readable order. Built in code
+    rather than left to the model — it kept fabricating a plausible second
+    vendor (e.g. adding "Cisco ASA" next to Palo Alto), dropping real
+    categories (Nessus, Maltego), and duplicating entries when asked to
+    assemble this itself. The caller force-inserts these lines verbatim
+    after generation rather than trusting the model to reproduce the
+    layout."""
     grouped: dict[str, list[str]] = {}
     for s in tool_skills:
-        cat = s.tool_category or "Other Tools"
-        grouped.setdefault(cat, []).append(s.name)
-    return [f"{cat}: {', '.join(sorted(names))}" for cat, names in sorted(grouped.items())]
+        group = _functional_group_for(s.tool_category)
+        grouped.setdefault(group, []).append(s.name)
+    ordered_groups = [g for g in _TOOL_FUNCTIONAL_GROUP_ORDER if g in grouped]
+    ordered_groups += sorted(g for g in grouped if g not in _TOOL_FUNCTIONAL_GROUP_ORDER)
+    return [f"{g}: {', '.join(sorted(set(grouped[g])))}" for g in ordered_groups]
 
 
 def _cert_display(c: "Certification") -> str:

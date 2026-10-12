@@ -174,7 +174,16 @@ def select_projects(projects: list[dict], source_scores: dict[str, float]) -> li
 # firewalls) down to just one surviving line. Below this many surviving
 # category lines, trust the full list over a thin filtered one instead of
 # trying to partially backfill within a category.
-MIN_TOOL_CATEGORY_LINES = 5
+#
+# Calibrated for functionally-grouped lines (profile_service.py's
+# _TOOL_FUNCTIONAL_GROUPS - SIEM & Investigation, Endpoint & Detection, etc.),
+# where there are only ever ~6 possible lines total rather than the dozen-plus
+# fine-grained tool_category tags the old per-tag grouping produced. A floor
+# of 5 there meant filtering could almost never survive at all (5 of a
+# possible ~6 is nearly everything) - defeating the point of curating within
+# each group. 3 still guards against an unreasonably thin result without
+# effectively disabling curation.
+MIN_TOOL_CATEGORY_LINES = 3
 
 
 def select_platforms_and_tools(tools_lines: list[str], source_scores: dict[str, float]) -> list[str]:
