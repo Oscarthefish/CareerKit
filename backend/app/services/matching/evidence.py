@@ -341,25 +341,50 @@ def _make_structure_validator(requirement_names: set[str]):
     return _validate
 
 
-_PATH_CITATION_PATTERN = re.compile(r"^[A-Za-z_]\w*(?:[./:]\w+)*$")
+_PATH_CITATION_PATTERN = re.compile(r"^[A-Za-z_]\w*(?:\[\d+\])*(?:[./:]\w+(?:\[\d+\])*)*$")
+_BRACKET_INDEX_SPLIT = re.compile(r"\[(\d+)\]")
+
+
+def _path_segments(source: str) -> list[str]:
+    """Breaks a citation path into traversal tokens - field names and
+    numeric indices. Handles both the dot/slash/colon-separated-numeric
+    style ("work_experience.0.key_responsibilities.14") and bracket-index
+    style ("work_experience[0].key_responsibilities[8]") the model has been
+    observed using, including a mix of the two within one citation - a
+    field name immediately followed by "[N]" is split into the field name
+    and the index as separate tokens either way."""
+    tokens: list[str] = []
+    for part in re.split(r"[./:]", source.strip()):
+        tokens.extend(p for p in _BRACKET_INDEX_SPLIT.split(part) if p != "")
+    return tokens
 
 
 def _resolve_path_citation(source: str, data) -> Optional[str]:
     """If `source` looks like a pointer into the profile structure rather
     than free text - observed in practice: the model citing
-    "work_experience.0.role", "work_experience:0:key_responsibilities:14", or
-    "achievements/1/action" (dot, colon and slash all seen), or a bare field
-    name like "professional_summary" - resolve it to the real value. Returns
-    None if it doesn't look like a path, or the path doesn't resolve to real
-    string/number content. Successfully resolving a path is proof by
-    construction that the citation is real: there's no way to fabricate a
-    path that happens to resolve to content that genuinely exists in the
-    data, so a resolved citation is trusted outright rather than needing the
-    substring "known name" check below."""
+    "work_experience.0.role", "work_experience:0:key_responsibilities:14",
+    "achievements/1/action" (dot, colon and slash all seen), bracket-index
+    notation like "work_experience[0].key_responsibilities[8]", or a bare
+    field name like "professional_summary" - resolve it to the real value.
+    Returns None if it doesn't look like a path, or the path doesn't
+    resolve to real string/number content. Successfully resolving a path is
+    proof by construction that the citation is real: there's no way to
+    fabricate a path that happens to resolve to content that genuinely
+    exists in the data, so a resolved citation is trusted outright rather
+    than needing the substring "known name" check below.
+
+    Bracket-index notation support fixed a real false-negative bug: a
+    citation like "work_experience[0].key_responsibilities[5]" pointing at
+    a genuinely real, strongly relevant responsibility was being rejected
+    outright (the old pattern never matched square brackets at all) and
+    the whole classification downgraded to NOT_FOUND despite the model
+    having cited something completely real - the opposite failure mode
+    from every other safety net in this codebase, which exists to catch
+    evidence that ISN'T real."""
     if not source or not _PATH_CITATION_PATTERN.match(source.strip()):
         return None
     node = data
-    for seg in re.split(r"[./:]", source.strip()):
+    for seg in _path_segments(source):
         if isinstance(node, list):
             if not seg.isdigit() or not (0 <= int(seg) < len(node)):
                 return None
