@@ -709,6 +709,52 @@ def _strip_unsupported_profile_claims(content: str, profile: dict, jd_terminolog
     return content[:section_match.start(2)] + new_body + "\n" + content[section_match.end(2):]
 
 
+def _ensure_community_involvement_present(content: str, community_involvement: list[dict]) -> str:
+    """Safety net: both cv_generation.md and custom_cv_generate.md instruct
+    that a COMMUNITY INVOLVEMENT section should be included whenever the
+    candidate profile has entries for it (already filtered upstream to
+    include_on_cv=True ones - see build_profile_summary), omitted only when
+    the list is genuinely empty - but a local model has been observed
+    dropping the whole section anyway, even across otherwise-identical
+    generations that included it correctly. The same stochastic-omission
+    failure _ensure_all_achievements_present/_ensure_all_roles_present
+    already guard against, just never extended to this section. Community
+    involvement bullets are free prose rather than a fixed field format, so
+    this can't verbatim-match a bullet the way achievement titles can -
+    instead it checks whether each entry's event name appears anywhere in
+    the section at all, and appends a plain factual bullet for any that
+    don't."""
+    if not community_involvement:
+        return content
+
+    def _fallback_bullet(c: dict) -> str:
+        parts = [
+            (c.get("event") or "").strip(),
+            (c.get("participation_type") or "").strip(),
+            (c.get("date") or "").strip(),
+        ]
+        return "- " + ", ".join(p for p in parts if p)
+
+    section_match = re.search(r"(^## COMMUNITY INVOLVEMENT\s*\n)(.*?)(?=\n## |\Z)", content, re.MULTILINE | re.DOTALL)
+    if section_match:
+        body = section_match.group(2)
+        missing = [
+            c for c in community_involvement
+            if (c.get("event") or "").strip() and (c["event"].strip().lower() not in body.lower())
+        ]
+        if not missing:
+            return content
+        new_body = body.rstrip("\n") + "\n" + "\n".join(_fallback_bullet(c) for c in missing) + "\n"
+        return content[:section_match.start(2)] + new_body + content[section_match.end(2):]
+
+    # Section missing entirely - it's always the last section in both CV
+    # formats, so append it at the very end.
+    bullets = "\n".join(_fallback_bullet(c) for c in community_involvement if (c.get("event") or "").strip())
+    if not bullets:
+        return content
+    return content.rstrip("\n") + "\n\n## COMMUNITY INVOLVEMENT\n" + bullets + "\n"
+
+
 def apply_cv_safety_nets(content: str, profile: dict, jd_terminology: list[str] | None = None) -> str:
     """The full set of deterministic post-generation corrections, applied in
     order, to any CV rendered from a profile dict - the Master CV and a
@@ -734,6 +780,7 @@ def apply_cv_safety_nets(content: str, profile: dict, jd_terminology: list[str] 
     content = _ensure_all_achievements_present(content, profile.get("achievements", []))
     content = _dedupe_achievement_bullets(content, profile.get("achievements", []))
     content = _force_correct_certifications(content, profile.get("certifications", []))
+    content = _ensure_community_involvement_present(content, profile.get("community_involvement", []))
     return content
 
 
