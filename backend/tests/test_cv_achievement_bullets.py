@@ -10,6 +10,7 @@ from app.api.cv import (
     _force_correct_domains_line,
     _force_correct_leadership_line,
     _force_correct_ops_skills_line,
+    _force_correct_platforms_and_tools,
     _force_correct_projects,
     _format_role_date,
     _merge_key_skills_continuations,
@@ -691,6 +692,80 @@ class StripUnboldedKeySkillsDuplicateLinesTests(unittest.TestCase):
         self.assertEqual(_strip_unbolded_key_skills_duplicate_lines(content), content)
 
 
+class ForceCorrectPlatformsAndToolsTests(unittest.TestCase):
+    TOOLS_LINES = ["SIEM: Splunk", "EDR / XDR: Cortex XDR"]
+
+    def test_replaces_a_correctly_labelled_block(self):
+        content = (
+            "## KEY SKILLS\n"
+            "**Security Operations & Incident Response:** Incident Response\n"
+            "**Platforms & Tools:**\n"
+            "SIEM: wrong value\n\n"
+            "## PROFESSIONAL EXPERIENCE\n"
+        )
+        result = _force_correct_platforms_and_tools(content, self.TOOLS_LINES)
+        self.assertIn("SIEM: Splunk\nEDR / XDR: Cortex XDR", result)
+        self.assertNotIn("wrong value", result)
+
+    def test_removes_a_stray_unlabelled_duplicate_elsewhere_in_key_skills(self):
+        # Real-world case: the model dumped the whole tool list a second
+        # time, unlabelled, straight after "## KEY SKILLS" - before the
+        # "**Security Operations & Incident Response:**" line even
+        # appeared - in addition to a correctly labelled copy further down.
+        # The label-anchored checks alone never look at this stray copy.
+        content = (
+            "## KEY SKILLS\n"
+            "SIEM: Splunk\n"
+            "EDR / XDR: Cortex XDR\n"
+            "**Security Operations & Incident Response:** Incident Response\n"
+            "**Platforms & Tools:**\n"
+            "SIEM: Splunk\n"
+            "EDR / XDR: Cortex XDR\n\n"
+            "## PROFESSIONAL EXPERIENCE\n"
+        )
+        result = _force_correct_platforms_and_tools(content, self.TOOLS_LINES)
+        self.assertEqual(result.count("SIEM: Splunk"), 1)
+        self.assertEqual(result.count("EDR / XDR: Cortex XDR"), 1)
+        self.assertIn("**Platforms & Tools:**\nSIEM: Splunk\nEDR / XDR: Cortex XDR", result)
+
+    def test_removes_a_stray_duplicate_in_a_different_internal_order(self):
+        # The real captured case: the stray dump was NOT in the same order
+        # as the correctly labelled copy (two separate model passes over
+        # the same category list, ordered differently each time) - a
+        # same-order contiguous block match would miss this entirely.
+        content = (
+            "## KEY SKILLS\n"
+            "EDR / XDR: Cortex XDR\n"
+            "SIEM: Splunk\n"
+            "**Security Operations & Incident Response:** Incident Response\n"
+            "**Platforms & Tools:**\n"
+            "SIEM: Splunk\n"
+            "EDR / XDR: Cortex XDR\n\n"
+            "## PROFESSIONAL EXPERIENCE\n"
+        )
+        result = _force_correct_platforms_and_tools(content, self.TOOLS_LINES)
+        self.assertEqual(result.count("SIEM: Splunk"), 1)
+        self.assertEqual(result.count("EDR / XDR: Cortex XDR"), 1)
+
+    def test_no_tools_lines_leaves_content_unchanged(self):
+        content = "## KEY SKILLS\n**Platforms & Tools:**\nSIEM: X\n"
+        self.assertEqual(_force_correct_platforms_and_tools(content, []), content)
+
+    def test_strips_a_leak_into_the_ops_line(self):
+        content = (
+            "## KEY SKILLS\n"
+            "**Security Operations & Incident Response:** Incident Response, SIEM: Splunk, EDR / XDR: Cortex XDR\n"
+        )
+        result = _force_correct_platforms_and_tools(content, self.TOOLS_LINES)
+        self.assertIn("**Security Operations & Incident Response:** Incident Response\n", result)
+        self.assertIn("**Platforms & Tools:**\nSIEM: Splunk\nEDR / XDR: Cortex XDR", result)
+
+    def test_inserts_after_key_skills_heading_when_nothing_else_present(self):
+        content = "## KEY SKILLS\n\n## PROFESSIONAL EXPERIENCE\n"
+        result = _force_correct_platforms_and_tools(content, self.TOOLS_LINES)
+        self.assertIn("**Platforms & Tools:**\nSIEM: Splunk\nEDR / XDR: Cortex XDR", result)
+
+
 class CandidateProductNamesTests(unittest.TestCase):
     def test_extracts_a_parenthetical_product_name(self):
         names = _candidate_product_names(["Experience Building Automations in a SOAR Platform (Tines)"])
@@ -707,6 +782,18 @@ class CandidateProductNamesTests(unittest.TestCase):
     def test_trivial_fragments_are_dropped(self):
         names = _candidate_product_names(["Some requirement (e.g. a tool)"])
         self.assertEqual(names, [])
+
+    def test_extracts_a_multi_word_product_name_with_no_parentheses(self):
+        # Real-world case: "Microsoft Sentinel" was hallucinated into a
+        # Professional Profile ("well-versed in... Microsoft Sentinel")
+        # despite zero supporting evidence - the parenthetical-only check
+        # never looked at this phrasing style at all.
+        names = _candidate_product_names(["Advanced experience with SIEM platforms such as Microsoft Sentinel or Splunk"])
+        self.assertIn("Microsoft Sentinel", names)
+
+    def test_does_not_flag_a_single_capitalised_word_at_sentence_start(self):
+        names = _candidate_product_names(["Advanced experience with firewalls"])
+        self.assertNotIn("Advanced", names)
 
 
 class StripUnsupportedProfileClaimsTests(unittest.TestCase):
