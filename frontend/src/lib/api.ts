@@ -118,6 +118,24 @@ export const updateCommunity = (id: number, data: object) =>
 export const deleteCommunity = (id: number) =>
   request(`/api/profile/community/${id}`, { method: 'DELETE' })
 
+export const getCareerDocuments = () => request('/api/profile/documents')
+export const getCareerDocument = (id: number) => request(`/api/profile/documents/${id}`)
+export const uploadCareerDocument = async (file: File) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await safeFetch(`${API_BASE}/api/profile/documents/upload`, { method: 'POST', body: fd })
+  if (!res.ok) {
+    throw await responseError(res)
+  }
+  return res.json()
+}
+export const updateCareerDocumentItem = (docId: number, localId: number, data: object) =>
+  request(`/api/profile/documents/${docId}/items/${localId}`, { method: 'PUT', body: JSON.stringify(data) })
+export const commitCareerDocument = (docId: number) =>
+  request(`/api/profile/documents/${docId}/commit`, { method: 'POST' })
+export const deleteCareerDocument = (docId: number) =>
+  request(`/api/profile/documents/${docId}`, { method: 'DELETE' })
+
 // CV
 export const getCurrentCV = () => request('/api/cv/current')
 export const getCVVersions = () => request('/api/cv/versions')
