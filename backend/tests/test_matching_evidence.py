@@ -394,6 +394,26 @@ class ResolvePathCitationTests(unittest.TestCase):
         # A list/dict isn't a citable value on its own - only string/number leaves are.
         self.assertIsNone(_resolve_path_citation("work_experience", COMPACT_PROFILE))
 
+    def test_resolves_bracket_index_notation(self):
+        # Real-world case: "work_experience[0].key_responsibilities[5]"
+        # pointing at genuinely real, strongly relevant data was being
+        # rejected outright - the old path pattern never matched square
+        # brackets at all, so a completely real citation was downgraded to
+        # NOT_FOUND despite the model having cited something real.
+        result = _resolve_path_citation("work_experience[0].key_responsibilities[1]", COMPACT_PROFILE)
+        self.assertEqual(result, "Mentored junior analysts through live case review")
+
+    def test_resolves_bracket_index_notation_without_a_separator_before_the_field(self):
+        result = _resolve_path_citation("work_experience[0].role", COMPACT_PROFILE)
+        self.assertEqual(result, "Senior SOC Analyst")
+
+    def test_bracket_index_out_of_range_still_returns_none(self):
+        self.assertIsNone(_resolve_path_citation("work_experience[0].key_responsibilities[99]", COMPACT_PROFILE))
+
+    def test_bracket_index_on_a_top_level_list(self):
+        result = _resolve_path_citation("target_roles[0]", COMPACT_PROFILE)
+        self.assertEqual(result, "Information Security Analyst")
+
 
 class SanitizeEvidencePathResolutionTests(unittest.TestCase):
     def setUp(self):
