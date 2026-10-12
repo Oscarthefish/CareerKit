@@ -13,7 +13,7 @@ import SectionHeader from '@/components/ui/SectionHeader'
 import JobStatus, { JOB_STATUSES } from '@/components/ui/JobStatus'
 import { MatchSummary } from '@/components/ui/MatchIndicator'
 import {
-  getApplication, updateApplication, analyzeJob, generateScorecard, generateJobMatch, generateCustomCV,
+  getApplication, updateApplication, analyzeJob, generateScorecard, generateJobMatch, generateCustomCV, saveCustomCV,
   generateCoverLetter, generateCVNotes, generateInterviewPrep,
   generateLinkedInAngle, generateTailoredCV, uploadJobDescription, exportApplication
 } from '@/lib/api'
@@ -626,11 +626,34 @@ function CustomCvPanel({
       ? { custom_cv: app.custom_cv, selection_summary: app.custom_cv_fixes_applied?.[0] || '' } as CustomCvResult
       : null
   )
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const handleGenerate = async () => {
     const data: any = await generateCustomCV(appId)
     setCvResult(data)
+    setEditing(false)
     refresh()
+  }
+
+  const startEditing = () => {
+    setDraft(cvResult?.custom_cv || '')
+    setEditing(true)
+  }
+
+  const cancelEditing = () => setEditing(false)
+
+  const saveEdit = async () => {
+    setSaving(true)
+    try {
+      await saveCustomCV(appId, draft)
+      setCvResult(cvResult ? { ...cvResult, custom_cv: draft } : ({ custom_cv: draft, selection_summary: '' } as CustomCvResult))
+      setEditing(false)
+      refresh()
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -646,30 +669,62 @@ function CustomCvPanel({
         loadingLabel="Selecting evidence and generating..."
         onClick={handleGenerate}
       />
+      {cvResult && (
+        <p className="text-xs text-gray-400 mt-2">
+          Regenerating replaces the whole document, including any manual edits below — export or note down any
+          hand-written changes first if you want to keep them.
+        </p>
+      )}
 
-      {cvResult && (cvResult.before || cvResult.after) && (
+      {cvResult && (
         <div className="mt-6 pt-6 border-t border-gray-100">
-          <h4 className="font-semibold text-gray-900 mb-3 text-sm">Before → After</h4>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-            <RescanScore label="Job Match" before={cvResult.before?.job_match} after={cvResult.after?.job_match} />
-            <RescanScore label="ATS Compatibility" before={cvResult.before?.ats_check} after={cvResult.after?.ats_check} />
-            <RescanScore label="Recruiter Readiness" before={cvResult.before?.recruiter_readiness} after={cvResult.after?.recruiter_readiness} />
-          </div>
-          <p className="text-xs text-gray-400 mb-4">
-            Job Match measures evidence in your structured profile data, so it typically won't move from a
-            tailored CV alone — that's intentional, not a bug: CareerKit won't inflate this score just because
-            the CV reads better. ATS Compatibility and Recruiter Readiness are text-driven and reflect the real
-            improvement above.
-          </p>
+          {(cvResult.before || cvResult.after) && (
+            <>
+              <h4 className="font-semibold text-gray-900 mb-3 text-sm">Before → After</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                <RescanScore label="Job Match" before={cvResult.before?.job_match} after={cvResult.after?.job_match} />
+                <RescanScore label="ATS Compatibility" before={cvResult.before?.ats_check} after={cvResult.after?.ats_check} />
+                <RescanScore label="Recruiter Readiness" before={cvResult.before?.recruiter_readiness} after={cvResult.after?.recruiter_readiness} />
+              </div>
+              <p className="text-xs text-gray-400 mb-4">
+                Job Match measures evidence in your structured profile data, so it typically won't move from a
+                tailored CV alone — that's intentional, not a bug: CareerKit won't inflate this score just because
+                the CV reads better. ATS Compatibility and Recruiter Readiness are text-driven and reflect the real
+                improvement above.
+              </p>
+            </>
+          )}
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs text-gray-400">{cvResult.selection_summary}</p>
             <div className="flex gap-2">
+              {!editing && <button onClick={startEditing} className="btn-ghost btn-sm">Edit</button>}
               <a href={exportApplication(appId, 'md', 'custom-cv')} download className="btn-ghost btn-sm">MD</a>
               <a href={exportApplication(appId, 'docx', 'custom-cv')} download className="btn-ghost btn-sm">DOCX</a>
               <a href={exportApplication(appId, 'pdf', 'custom-cv')} download className="btn-ghost btn-sm">PDF</a>
             </div>
           </div>
-          <CVRenderer markdown={cvResult.custom_cv} />
+          {editing ? (
+            <div className="space-y-3">
+              <textarea
+                className="textarea font-mono text-xs"
+                rows={24}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+              />
+              <p className="text-xs text-gray-400">
+                Editing the raw CV document. Section headings start with "##" and bullets with "-" — keep that
+                structure so exports still render correctly.
+              </p>
+              <div className="flex gap-2">
+                <button onClick={saveEdit} disabled={saving} className="btn-primary btn-sm">
+                  {saving ? 'Saving...' : 'Save changes'}
+                </button>
+                <button onClick={cancelEditing} disabled={saving} className="btn-ghost btn-sm">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <CVRenderer markdown={cvResult.custom_cv} />
+          )}
         </div>
       )}
     </div>

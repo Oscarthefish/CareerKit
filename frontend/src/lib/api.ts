@@ -170,6 +170,8 @@ export const generateJobMatch = (id: number) =>
   request(`/api/applications/${id}/job-match`, { method: 'POST' })
 export const generateCustomCV = (id: number) =>
   request(`/api/applications/${id}/custom-cv`, { method: 'POST' })
+export const saveCustomCV = (id: number, content: string) =>
+  request(`/api/applications/${id}/custom-cv`, { method: 'PUT', body: JSON.stringify({ content }) })
 
 // Master CV Feedback Loop
 export const getSkillGaps = () => request('/api/insights/skill-gaps')
