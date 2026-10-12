@@ -572,6 +572,16 @@ class SanitizeScorecardTests(unittest.TestCase):
         sanitize_scorecard(scorecard, PROFILE)
         self.assertEqual(scorecard, before)
 
+    def test_removes_a_do_not_claim_entry_that_is_a_real_skill(self):
+        # Real-world case: "F5 WAF", "Cisco AMP" and "Cisco SecureX" - all
+        # real, named tools the candidate genuinely has on record - ended up
+        # in do_not_claim anyway. This check needs no job_match_result at
+        # all, unlike the Job-Match-based one above.
+        scorecard = {"strong_matches": [], "do_not_claim": ["Splunk", "AWS Lambda"]}
+        result = sanitize_scorecard(scorecard, PROFILE)
+        self.assertNotIn("Splunk", result["do_not_claim"])
+        self.assertIn("AWS Lambda", result["do_not_claim"])
+
     def test_removes_a_do_not_claim_entry_job_match_confirms_strong(self):
         # Real-world case: the model told the user not to claim "GIAC" when
         # they genuinely hold a GIAC certification and Job Match itself

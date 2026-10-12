@@ -636,6 +636,12 @@ def sanitize_scorecard(scorecard: dict, profile: dict, job_match_result: dict | 
     isn't built for, and a false removal is a safer failure than a false
     fuzzy-match addition.
 
+    Also removes any "do_not_claim" entry that exactly names a real profile
+    item outright (unconditional - doesn't need job_match_result), the same
+    false-positive family caught a different way: observed telling the user
+    not to claim real tools they genuinely have on record (e.g. "F5 WAF",
+    "Cisco AMP").
+
     Finally resolves direct self-contradiction: a skill the model listed in
     both "strong_matches" and "do_not_claim" in the same response (observed
     in practice) is kept only in "do_not_claim", the more conservative of
@@ -688,6 +694,17 @@ def sanitize_scorecard(scorecard: dict, profile: dict, job_match_result: dict | 
             item for item in do_not_claim
             if coverage_by_name.get(item.strip().lower()) != "STRONG_EVIDENCE"
         ]
+
+    # Same false-positive family, caught a different way and unconditional
+    # (no job_match_result needed): a do_not_claim entry that exactly names
+    # a real profile item outright - observed in practice for tools the
+    # candidate genuinely has on record (e.g. "F5 WAF", "Cisco AMP",
+    # "Cisco SecureX" all showed up in do_not_claim despite being real,
+    # named skills). known_names already has every skill/tool/cert name
+    # verbatim (see _profile_item_names above, the same ground truth the
+    # citation-existence check at the top of this function trusts), so this
+    # doesn't need a second data source.
+    do_not_claim = [item for item in do_not_claim if item.strip().lower() not in known_names]
 
     do_not_claim_lower = {s.lower() for s in do_not_claim}
     kept_strong = [m for m in kept_strong if (m.get("skill") or "").lower() not in do_not_claim_lower]
