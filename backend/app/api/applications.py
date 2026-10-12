@@ -310,7 +310,8 @@ async def generate_scorecard(app_id: int, db: Session = Depends(get_db)):
                    "or pick a larger model in Settings.",
         )
     from ..services.matching.evidence import sanitize_scorecard
-    scorecard = sanitize_scorecard(scorecard, profile)
+    job_match_result = json.loads(app.job_match_result) if app.job_match_result else None
+    scorecard = sanitize_scorecard(scorecard, profile, job_match_result=job_match_result)
     app.match_scorecard = json.dumps(scorecard)
     db.commit()
     persist_application_files(db, app_id)

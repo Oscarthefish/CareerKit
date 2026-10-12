@@ -552,6 +552,89 @@ class SanitizeScorecardTests(unittest.TestCase):
         sanitize_scorecard(scorecard, PROFILE)
         self.assertEqual(scorecard, before)
 
+    def test_resolves_self_contradiction_between_strong_match_and_do_not_claim(self):
+        # Real-world case: the model listed the same skill under both
+        # "strong_matches" and "do_not_claim" in one response.
+        scorecard = {
+            "strong_matches": [{"skill": "Fraud analytics systems", "evidence": "Achievement: Led ransomware response"}],
+            "do_not_claim": ["Fraud analytics systems"],
+        }
+        result = sanitize_scorecard(scorecard, PROFILE)
+        self.assertEqual(result["strong_matches"], [])
+        self.assertIn("Fraud analytics systems", result["do_not_claim"])
+
+    def test_demotes_a_strong_match_job_match_rates_only_partial(self):
+        # Real-world case: the model cited a genuine achievement (so the
+        # existence check above passes it) as "strong" evidence for "fraud
+        # intelligence" - match_scorecard.md's own rule 7 says this should
+        # be partial/transferable at most, and the separately-computed Job
+        # Match pipeline agrees. Cross-checking against it catches what the
+        # citation-existence check alone cannot.
+        scorecard = {
+            "strong_matches": [{
+                "skill": "Fraud intelligence",
+                "evidence": "Achievement: Led ransomware response",
+            }],
+            "do_not_claim": [],
+        }
+        job_match_result = {"requirement_coverage": [
+            {"name": "Fraud intelligence and investigations expertise", "coverage": "PARTIAL_EVIDENCE"},
+        ]}
+        result = sanitize_scorecard(scorecard, PROFILE, job_match_result=job_match_result)
+        self.assertEqual(result["strong_matches"], [])
+        self.assertEqual(len(result["partial_matches"]), 1)
+        self.assertEqual(result["partial_matches"][0]["skill"], "Fraud intelligence")
+
+    def test_keeps_a_strong_match_job_match_also_rates_strong(self):
+        scorecard = {
+            "strong_matches": [{"skill": "Incident Response", "evidence": "Achievement: Led ransomware response"}],
+            "do_not_claim": [],
+        }
+        job_match_result = {"requirement_coverage": [
+            {"name": "Incident Response", "coverage": "STRONG_EVIDENCE"},
+        ]}
+        result = sanitize_scorecard(scorecard, PROFILE, job_match_result=job_match_result)
+        self.assertEqual(len(result["strong_matches"]), 1)
+        self.assertEqual(result["partial_matches"], [])
+
+    def test_single_word_skill_does_not_spuriously_match_a_longer_requirement(self):
+        # Real-world case: "Investigations" (one significant word) scored
+        # 100% overlap against "Fraud intelligence and investigations
+        # expertise" purely because the word appears in both - demoting a
+        # broad, genuinely-strong general claim based on a coincidental
+        # match to a much narrower, differently-scoped requirement.
+        scorecard = {
+            "strong_matches": [{"skill": "Investigations", "evidence": "Achievement: Led ransomware response"}],
+            "do_not_claim": [],
+        }
+        job_match_result = {"requirement_coverage": [
+            {"name": "Fraud intelligence and investigations expertise", "coverage": "PARTIAL_EVIDENCE"},
+        ]}
+        result = sanitize_scorecard(scorecard, PROFILE, job_match_result=job_match_result)
+        self.assertEqual(len(result["strong_matches"]), 1)
+        self.assertEqual(result["partial_matches"], [])
+
+    def test_no_fuzzy_match_in_job_match_leaves_strong_match_alone(self):
+        # Job Match simply never extracted an equivalent requirement -
+        # nothing to cross-check against, so don't demote on silence.
+        scorecard = {
+            "strong_matches": [{"skill": "Incident Response", "evidence": "Achievement: Led ransomware response"}],
+            "do_not_claim": [],
+        }
+        job_match_result = {"requirement_coverage": [
+            {"name": "Completely unrelated requirement", "coverage": "NO_EVIDENCE"},
+        ]}
+        result = sanitize_scorecard(scorecard, PROFILE, job_match_result=job_match_result)
+        self.assertEqual(len(result["strong_matches"]), 1)
+
+    def test_no_job_match_result_skips_cross_check(self):
+        scorecard = {
+            "strong_matches": [{"skill": "Incident Response", "evidence": "Achievement: Led ransomware response"}],
+            "do_not_claim": [],
+        }
+        result = sanitize_scorecard(scorecard, PROFILE, job_match_result=None)
+        self.assertEqual(len(result["strong_matches"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
