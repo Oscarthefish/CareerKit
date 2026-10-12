@@ -18,6 +18,8 @@ from app.api.cv import (
     _strip_empty_key_skills_lines,
     _strip_trailing_line_commas,
     _strip_unbolded_key_skills_duplicate_lines,
+    _strip_unsupported_profile_claims,
+    _candidate_product_names,
 )
 
 CV_TEMPLATE = """# Alex Example
@@ -643,6 +645,80 @@ class StripUnboldedKeySkillsDuplicateLinesTests(unittest.TestCase):
     def test_no_duplicate_present_leaves_content_unchanged(self):
         content = "## KEY SKILLS\n\n**Leadership & People:** Team Leadership\n\n## PROFESSIONAL EXPERIENCE\n"
         self.assertEqual(_strip_unbolded_key_skills_duplicate_lines(content), content)
+
+
+class CandidateProductNamesTests(unittest.TestCase):
+    def test_extracts_a_parenthetical_product_name(self):
+        names = _candidate_product_names(["Experience Building Automations in a SOAR Platform (Tines)"])
+        self.assertIn("Tines", names)
+
+    def test_splits_multiple_names_in_one_parenthetical(self):
+        names = _candidate_product_names(["Cloud security experience (AWS/Azure)"])
+        self.assertIn("AWS", names)
+        self.assertIn("Azure", names)
+
+    def test_no_parenthetical_yields_no_candidates(self):
+        self.assertEqual(_candidate_product_names(["Clear, calm communication"]), [])
+
+    def test_trivial_fragments_are_dropped(self):
+        names = _candidate_product_names(["Some requirement (e.g. a tool)"])
+        self.assertEqual(names, [])
+
+
+class StripUnsupportedProfileClaimsTests(unittest.TestCase):
+    PROFILE_TEMPLATE = """# Alex Example
+
+## PROFESSIONAL PROFILE
+
+{profile_text}
+
+## KEY SKILLS
+
+- SIEM
+"""
+
+    def test_drops_a_sentence_claiming_a_tool_the_candidate_never_used(self):
+        # Real-world case: the model was shown "SOAR Platform (Tines)" as JD
+        # vocabulary and wrote a first-person claim using it in one sentence
+        # alongside a real, separate claim, despite nothing in the
+        # candidate's actual data mentioning Tines or SOAR at all.
+        content = self.PROFILE_TEMPLATE.format(profile_text=(
+            "With over eight years of SOC experience, I bring strong incident response skills. "
+            "I have experience building Automations in a SOAR Platform (Tines). "
+            "I also have a strong track record mentoring junior analysts."
+        ))
+        profile = {"skills": [{"name": "Incident Response"}], "achievements": []}
+        result = _strip_unsupported_profile_claims(
+            content, profile, ["Experience Building Automations in a SOAR Platform (Tines)"]
+        )
+        self.assertNotIn("Tines", result)
+        self.assertNotIn("SOAR", result)
+        self.assertIn("With over eight years of SOC experience", result)
+        self.assertIn("mentoring junior analysts", result)
+
+    def test_leaves_a_genuinely_supported_claim_alone(self):
+        content = self.PROFILE_TEMPLATE.format(profile_text=(
+            "I have hands-on experience with Splunk Enterprise Security for daily triage."
+        ))
+        profile = {"skills": [{"name": "Splunk Enterprise Security"}]}
+        result = _strip_unsupported_profile_claims(
+            content, profile, ["SIEM platform experience (Splunk Enterprise Security)"]
+        )
+        self.assertEqual(result, content)
+
+    def test_no_jd_terminology_leaves_content_unchanged(self):
+        content = self.PROFILE_TEMPLATE.format(profile_text="Anything at all.")
+        self.assertEqual(_strip_unsupported_profile_claims(content, {}, []), content)
+
+    def test_no_professional_profile_section_does_not_crash(self):
+        content = "# Alex Example\n\n## KEY SKILLS\n\n- SIEM\n"
+        result = _strip_unsupported_profile_claims(content, {}, ["Tool (Tines)"])
+        self.assertEqual(result, content)
+
+    def test_dropping_every_sentence_leaves_content_unchanged_rather_than_blank(self):
+        content = self.PROFILE_TEMPLATE.format(profile_text="I have experience with Tines.")
+        result = _strip_unsupported_profile_claims(content, {}, ["SOAR (Tines)"])
+        self.assertEqual(result, content)
 
 
 if __name__ == "__main__":
