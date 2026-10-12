@@ -552,6 +552,30 @@ class SanitizeScorecardTests(unittest.TestCase):
         sanitize_scorecard(scorecard, PROFILE)
         self.assertEqual(scorecard, before)
 
+    def test_removes_a_do_not_claim_entry_job_match_confirms_strong(self):
+        # Real-world case: the model told the user not to claim "GIAC" when
+        # they genuinely hold a GIAC certification and Job Match itself
+        # rates the exact same requirement STRONG_EVIDENCE.
+        scorecard = {"strong_matches": [], "do_not_claim": ["GIAC", "OSCP"]}
+        job_match_result = {"requirement_coverage": [
+            {"name": "GIAC", "coverage": "STRONG_EVIDENCE"},
+            {"name": "OSCP", "coverage": "NO_EVIDENCE"},
+        ]}
+        result = sanitize_scorecard(scorecard, PROFILE, job_match_result=job_match_result)
+        self.assertNotIn("GIAC", result["do_not_claim"])
+        self.assertIn("OSCP", result["do_not_claim"])
+
+    def test_do_not_claim_removal_is_exact_not_fuzzy(self):
+        # A single short word like "GIAC" would never clear the 2-word
+        # minimum _fuzzy_requirement_coverage requires, and that's
+        # intentional here - this is a separate, exact-match-only check.
+        scorecard = {"strong_matches": [], "do_not_claim": ["Fraud prevention"]}
+        job_match_result = {"requirement_coverage": [
+            {"name": "Fraud prevention and detection expertise", "coverage": "STRONG_EVIDENCE"},
+        ]}
+        result = sanitize_scorecard(scorecard, PROFILE, job_match_result=job_match_result)
+        self.assertIn("Fraud prevention", result["do_not_claim"])
+
     def test_resolves_self_contradiction_between_strong_match_and_do_not_claim(self):
         # Real-world case: the model listed the same skill under both
         # "strong_matches" and "do_not_claim" in one response.
