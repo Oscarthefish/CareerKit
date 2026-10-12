@@ -567,7 +567,72 @@ def _force_correct_platforms_and_tools(content: str, tools_lines: list[str]) -> 
     return heading_pattern.sub(lambda m: m.group(0) + "\n" + correct_block, content, count=1)
 
 
-def apply_cv_safety_nets(content: str, profile: dict) -> str:
+_TERMINOLOGY_PAREN_PATTERN = re.compile(r"\(([^)]+)\)")
+
+
+def _candidate_product_names(jd_terminology: list[str]) -> list[str]:
+    """Pulls likely specific product/platform names out of JD requirement
+    strings like "Experience Building Automations in a SOAR Platform
+    (Tines)" - the parenthetical is almost always the actual product name a
+    JD names alongside a general capability. Short/trivial fragments are
+    dropped to avoid flagging something like "(NZ)" or "(e.g.)"."""
+    names: list[str] = []
+    for term in jd_terminology or []:
+        for match in _TERMINOLOGY_PAREN_PATTERN.findall(term):
+            for part in match.split("/"):
+                for piece in part.split(","):
+                    piece = piece.strip()
+                    if len(piece) > 2 and not piece.lower().startswith("e.g"):
+                        names.append(piece)
+    return names
+
+
+def _strip_unsupported_profile_claims(content: str, profile: dict, jd_terminology: list[str]) -> str:
+    """Safety net: custom_cv_generate.md shows the model JD_TERMINOLOGY to
+    use "where the candidate's evidence genuinely supports it" and tells it
+    never to invent a tool - but a local model has been observed ignoring
+    that qualifier and writing a specific named product it was only shown
+    as JD vocabulary directly into the PROFESSIONAL PROFILE paragraph as if
+    the candidate had used it (e.g. claiming "experience building
+    Automations in a SOAR Platform (Tines)" when nothing in the selected
+    profile data mentions Tines or SOAR at all). Key Skills prose is already
+    fully force-replaced by the _force_correct_*_line functions above, so
+    the free-text Professional Profile paragraph is the one place this can
+    still slip through.
+
+    Checks each candidate product name named in the JD against the full
+    selected-profile data actually given to the model; if a name the
+    candidate doesn't have anywhere in their real data appears in a
+    Professional Profile sentence, drops that whole sentence rather than
+    surgically cutting a clause out of a flowing paragraph, which risks
+    leaving broken grammar behind."""
+    candidates = _candidate_product_names(jd_terminology)
+    if not candidates:
+        return content
+
+    profile_blob = json.dumps(profile).lower()
+    unsupported = [c for c in candidates if c.lower() not in profile_blob]
+    if not unsupported:
+        return content
+
+    section_match = re.search(r"(^## PROFESSIONAL PROFILE\s*\n)(.*?)(?=\n## |\Z)", content, re.MULTILINE | re.DOTALL)
+    if not section_match:
+        return content
+    section_body = section_match.group(2)
+
+    sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", section_body)
+    kept = [
+        s for s in sentences
+        if not any(re.search(rf"\b{re.escape(term)}\b", s, re.IGNORECASE) for term in unsupported)
+    ]
+    new_body = " ".join(kept).strip()
+    if not new_body:
+        return content  # dropping every sentence would leave no profile at all - leave as-is rather than blank it
+
+    return content[:section_match.start(2)] + new_body + "\n" + content[section_match.end(2):]
+
+
+def apply_cv_safety_nets(content: str, profile: dict, jd_terminology: list[str] | None = None) -> str:
     """The full set of deterministic post-generation corrections, applied in
     order, to any CV rendered from a profile dict - the Master CV and a
     per-application Custom CV alike. Each individual function above documents
@@ -575,6 +640,7 @@ def apply_cv_safety_nets(content: str, profile: dict) -> str:
     in the order that makes each one's precondition hold (e.g. dedup only
     works once every real achievement is guaranteed present)."""
     content = re.sub(r"\n[ \t]*-[ \t]*\n", "\n", content)
+    content = _strip_unsupported_profile_claims(content, profile, jd_terminology or [])
     content = _strip_trailing_line_commas(content)
     content = _merge_key_skills_continuations(content)
     content = _strip_unbolded_key_skills_duplicate_lines(content)
