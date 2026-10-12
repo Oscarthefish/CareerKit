@@ -43,6 +43,36 @@ def _company_display(app: JobApplication) -> str:
     return company
 
 
+_CV_LENGTH_GUIDANCE = {
+    "1-page": (
+        "The candidate has set a target length of one page: aim for roughly 450-650 words "
+        "of content overall. Be highly selective - include only the strongest, most directly "
+        "relevant evidence, and favour fewer, sharper bullets over covering everything."
+    ),
+    "2-pages": (
+        "The candidate has set a target length of two pages: aim for roughly 900-1400 words "
+        "of content overall (more only if the role is senior/complex and the selected evidence "
+        "genuinely warrants it)."
+    ),
+    "3-pages": (
+        "The candidate has set a target length of three pages: aim for roughly 1500-2100 words "
+        "of content overall. This is appropriate for a senior role or an extensive, highly relevant "
+        "career history - prioritise meaningful, well-supported content over hitting an exact word "
+        "count, and do not pad with repetition or filler just to reach length."
+    ),
+}
+_DEFAULT_CV_LENGTH_GUIDANCE = _CV_LENGTH_GUIDANCE["2-pages"]
+
+
+def _cv_length_guidance(preferred_cv_length: Optional[str]) -> str:
+    """Translates the candidate's stored page-length preference (Career
+    Profile > Style) into an explicit word-count instruction for the custom
+    CV prompt. Falls back to the 2-page band - the same default the DB column
+    itself uses - for an unset or unrecognised value, so this never produces
+    an empty or nonsensical instruction."""
+    return _CV_LENGTH_GUIDANCE.get(preferred_cv_length, _DEFAULT_CV_LENGTH_GUIDANCE)
+
+
 def _serialize(app: JobApplication) -> dict:
     return {
         "id": app.id,
@@ -431,6 +461,7 @@ async def generate_custom_cv(app_id: int, db: Session = Depends(get_db)):
         COMPANY_NAME=_company_display(app),
         JD_TERMINOLOGY=", ".join(terminology) if terminology else "(none extracted)",
         BANNED_PHRASES=banned,
+        CV_LENGTH_GUIDANCE=_cv_length_guidance(profile.get("style", {}).get("preferred_cv_length")),
     )
     provider = get_provider()
     try:
