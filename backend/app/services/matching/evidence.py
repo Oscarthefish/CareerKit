@@ -601,6 +601,16 @@ def sanitize_scorecard(scorecard: dict, profile: dict, job_match_result: dict | 
     "strong_matches" entry whose fuzzy-matched Job Match requirement scored
     less than STRONG_EVIDENCE is demoted to "partial_matches" instead.
 
+    Also cross-checks "do_not_claim" against Job Match the other direction -
+    removes any entry whose name exactly (case-insensitive) matches a Job
+    Match requirement already rated STRONG_EVIDENCE, since this feature has
+    been observed telling the user not to claim something (e.g. "GIAC")
+    they genuinely hold and Job Match itself confirms. Exact rather than
+    fuzzy matching here on purpose - do_not_claim entries are usually short
+    identifiers (certification acronyms, named tools) fuzzy word-overlap
+    isn't built for, and a false removal is a safer failure than a false
+    fuzzy-match addition.
+
     Finally resolves direct self-contradiction: a skill the model listed in
     both "strong_matches" and "do_not_claim" in the same response (observed
     in practice) is kept only in "do_not_claim", the more conservative of
@@ -632,6 +642,27 @@ def sanitize_scorecard(scorecard: dict, profile: dict, job_match_result: dict | 
             else:
                 still_strong.append(m)
         kept_strong = still_strong
+
+    # Cross-check do_not_claim against Job Match too, the other direction
+    # from the strong_matches demotion above: observed in practice telling
+    # the user not to claim "GIAC" when they genuinely hold a GIAC
+    # certification and Job Match itself rates it STRONG_EVIDENCE - a
+    # factual error, not a judgement call, since do_not_claim entries are
+    # usually short identifiers (certification acronyms, named tools) where
+    # fuzzy word-overlap is the wrong tool (a single short word like "GIAC"
+    # would never clear the 2-word minimum _fuzzy_requirement_coverage
+    # requires) - exact (case-insensitive) name matching is both sufficient
+    # and safer here, since a false removal just drops a real-feeling
+    # do_not_claim entry rather than fuzzy-adding one back in.
+    if job_match_result:
+        coverage_by_name = {
+            r.get("name", "").strip().lower(): r.get("coverage")
+            for r in job_match_result.get("requirement_coverage", [])
+        }
+        do_not_claim = [
+            item for item in do_not_claim
+            if coverage_by_name.get(item.strip().lower()) != "STRONG_EVIDENCE"
+        ]
 
     do_not_claim_lower = {s.lower() for s in do_not_claim}
     kept_strong = [m for m in kept_strong if (m.get("skill") or "").lower() not in do_not_claim_lower]
