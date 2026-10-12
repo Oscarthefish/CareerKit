@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from ..models.profile import (
     Profile, WorkExperience, Skill, Certification,
     Achievement, Project, EvidenceItem, StylePreferences,
-    Training, CommunityInvolvement
+    Training, CommunityInvolvement, Clarification
 )
 from ..core.vocab import (
     normalise_confidence, EXCLUDED_TIERS, CONFIDENTIALITY_MODE_ALLOWLIST, DEFAULT_MODE
@@ -210,6 +210,7 @@ def compact_profile_for_prompt(summary: dict) -> dict:
         "training": [_training(t) for t in summary.get("training", [])],
         "achievements": [_ach(a) for a in summary.get("achievements", [])],
         "projects": summary.get("projects", []),
+        "clarifications": summary.get("clarifications", []),
     }
 
 
@@ -269,6 +270,7 @@ def build_profile_summary(db: Session, mode: str = DEFAULT_MODE) -> dict:
         if mode == "full" or getattr(c, community_field)
     ]
     style = get_or_create_style(db)
+    clarifications = db.query(Clarification).all()
 
     return {
         "personal": {
@@ -407,4 +409,8 @@ def build_profile_summary(db: Session, mode: str = DEFAULT_MODE) -> dict:
             "avoid_phrases": json.loads(style.avoid_phrases or "[]"),
             "preferred_phrases": json.loads(style.preferred_phrases or "[]"),
         },
+        "clarifications": [
+            {"applies_to": c.applies_to, "statement": c.statement}
+            for c in clarifications
+        ],
     }

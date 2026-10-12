@@ -9,7 +9,7 @@ from ..core.database import get_db
 from ..models.profile import (
     Profile, WorkExperience, Skill, Certification,
     Achievement, Project, EvidenceItem, StylePreferences,
-    Training, CommunityInvolvement, UploadedCareerDocument
+    Training, CommunityInvolvement, UploadedCareerDocument, Clarification
 )
 from ..services.profile_service import get_or_create_profile, get_or_create_style, get_banned_phrases_instruction
 from ..services.document_extraction import find_possible_duplicate, find_batch_duplicate, commit_item
@@ -798,6 +798,67 @@ def commit_career_document(doc_id: int, db: Session = Depends(get_db)):
 @router.delete("/documents/{doc_id}")
 def delete_career_document(doc_id: int, db: Session = Depends(get_db)):
     row = db.query(UploadedCareerDocument).filter(UploadedCareerDocument.id == doc_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------- Clarifications ----------
+#
+# Factual corrections the candidate makes about their own experience, in
+# their own words - see models/profile.py's Clarification docstring for why
+# this is kept separate from StylePreferences. Read into every prompt that
+# writes or classifies evidence via build_profile_summary/
+# compact_profile_for_prompt (see profile_service.py) - no separate wiring
+# needed per prompt beyond what each one is told to do with the field.
+
+class ClarificationCreate(BaseModel):
+    applies_to: str
+    statement: str
+
+
+def _serialize_clarification(row: Clarification) -> dict:
+    return {
+        "id": row.id,
+        "applies_to": row.applies_to,
+        "statement": row.statement,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.get("/clarifications")
+def list_clarifications(db: Session = Depends(get_db)):
+    rows = db.query(Clarification).order_by(Clarification.id.desc()).all()
+    return [_serialize_clarification(r) for r in rows]
+
+
+@router.post("/clarifications")
+def create_clarification(body: ClarificationCreate, db: Session = Depends(get_db)):
+    row = Clarification(**body.model_dump())
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _serialize_clarification(row)
+
+
+@router.put("/clarifications/{item_id}")
+def update_clarification(item_id: int, body: ClarificationCreate, db: Session = Depends(get_db)):
+    row = db.query(Clarification).filter(Clarification.id == item_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    for k, v in body.model_dump().items():
+        setattr(row, k, v)
+    db.commit()
+    db.refresh(row)
+    return _serialize_clarification(row)
+
+
+@router.delete("/clarifications/{item_id}")
+def delete_clarification(item_id: int, db: Session = Depends(get_db)):
+    row = db.query(Clarification).filter(Clarification.id == item_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Not found")
     db.delete(row)

@@ -45,5 +45,20 @@ class CompactProfileForPromptAchievementsTests(unittest.TestCase):
         self.assertNotIn("date_range", compact["achievements"][0])
 
 
+class CompactProfileForPromptClarificationsTests(unittest.TestCase):
+    def test_clarifications_passed_through(self):
+        summary = {
+            "clarifications": [
+                {"applies_to": "Ransomware response achievement", "statement": "I was not Incident Commander."},
+            ],
+        }
+        compact = compact_profile_for_prompt(summary)
+        self.assertEqual(compact["clarifications"], summary["clarifications"])
+
+    def test_missing_clarifications_passes_through_as_empty_list(self):
+        compact = compact_profile_for_prompt({})
+        self.assertEqual(compact["clarifications"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
