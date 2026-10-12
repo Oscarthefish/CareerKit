@@ -535,6 +535,29 @@ async def generate_custom_cv(app_id: int, db: Session = Depends(get_db)):
     }
 
 
+class CustomCvSaveRequest(BaseModel):
+    content: str
+
+
+@router.put("/{app_id}/custom-cv")
+def save_custom_cv(app_id: int, body: CustomCvSaveRequest, db: Session = Depends(get_db)):
+    """Persists a manual edit to the tailored Custom CV exactly as given - no
+    AI safety-net post-processing, since the whole point of a manual edit is
+    the user overriding what's there; re-running generation safety nets over
+    it would fight the edit rather than respect it. ATS Compatibility and
+    Recruiter Readiness scores are deliberately left as the last-generated
+    values rather than rescanned here (the latter needs a brutal_review LLM
+    call, too slow to run on every save) - Regenerate remains the way to get
+    a fresh score against the current content."""
+    app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Not found")
+    app.custom_cv = body.content
+    db.commit()
+    persist_application_files(db, app_id)
+    return {"custom_cv": app.custom_cv}
+
+
 @router.post("/{app_id}/cover-letter")
 async def generate_cover_letter(app_id: int, db: Session = Depends(get_db)):
     app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
