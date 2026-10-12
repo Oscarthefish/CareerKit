@@ -530,7 +530,51 @@ def _evidence_is_real(evidence: str, known_names: set[str]) -> bool:
     return _source_is_known(low, known_names)
 
 
-def sanitize_scorecard(scorecard: dict, profile: dict) -> dict:
+_SCORECARD_STOPWORDS = {
+    "the", "and", "with", "for", "from", "into", "that", "this", "were",
+    "have", "has", "was", "are", "and", "skills", "experience", "a", "an",
+    "of", "to", "in", "on", "at",
+}
+
+
+def _scorecard_significant_words(text: str) -> set[str]:
+    words = (raw.strip(".,;:()\"'").lower() for raw in (text or "").split())
+    return {w for w in words if len(w) > 2 and w not in _SCORECARD_STOPWORDS}
+
+
+def _fuzzy_requirement_coverage(skill_name: str, requirement_coverage: list[dict]) -> str | None:
+    """Finds the Job Match requirement whose name best overlaps skill_name
+    and returns its coverage (STRONG_EVIDENCE/PARTIAL_EVIDENCE/NO_EVIDENCE/
+    UNKNOWN), or None if nothing overlaps enough to trust the match. Job
+    Match requirement names and Scorecard skill names come from two
+    independent extraction passes over the same JD and rarely match
+    exactly (e.g. "Fraud intelligence" vs "Fraud intelligence and
+    investigations expertise"), hence fuzzy rather than exact matching -
+    same word-overlap technique as the achievement dedup check in api/cv.py.
+
+    Requires at least 2 significant words on both sides before attempting a
+    match: a single generic word (e.g. "Investigations") trivially scores
+    100% overlap against any longer phrase that happens to contain it (the
+    ratio divides by the SMALLER word count), which produced a real false
+    positive in testing - matching a broad, genuinely-strong "Investigations"
+    claim against the much narrower, fraud-specific "Fraud intelligence and
+    investigations expertise" requirement purely because they share one
+    word. Two-plus words makes a coincidental match far less likely."""
+    sw = _scorecard_significant_words(skill_name)
+    if len(sw) < 2:
+        return None
+    best = None
+    for r in requirement_coverage:
+        rw = _scorecard_significant_words(r.get("name", ""))
+        if len(rw) < 2:
+            continue
+        overlap = len(sw & rw) / min(len(sw), len(rw))
+        if overlap >= 0.5 and (best is None or overlap > best[1]):
+            best = (r.get("coverage"), overlap)
+    return best[0] if best else None
+
+
+def sanitize_scorecard(scorecard: dict, profile: dict, job_match_result: dict | None = None) -> dict:
     """Safety net for the (older, separate) Match Scorecard feature -
     match_scorecard.md instructs the model to cite a specific real profile
     item as "evidence" for every strong match, and to never claim a strong
@@ -541,7 +585,26 @@ def sanitize_scorecard(scorecard: dict, profile: dict) -> dict:
     is missing, a placeholder, or doesn't correspond to a real profile item
     into "do_not_claim" instead, rather than let an unverifiable "strong
     match" reach the user - the same downgrade-rather-than-discard principle
-    _sanitize_evidence uses above, applied to this older feature's output."""
+    _sanitize_evidence uses above, applied to this older feature's output.
+
+    Also cross-checks the survivors against the separately-computed Job
+    Match requirement_coverage when available (fuzzy name match - see
+    _fuzzy_requirement_coverage). This targets a different failure mode than
+    the citation-existence check above: a cited profile item can be
+    completely real (e.g. a genuine OSINT CTF achievement) without actually
+    being STRONG evidence for the specific requirement it's attached to
+    (e.g. "fraud intelligence") - match_scorecard.md's own rule 7 already
+    tells the model not to do this, but has been observed doing it anyway.
+    Job Match enforces the same rule through a separately validated,
+    code-checked pipeline (evidence_classification.md + the evidence engine
+    above), so where it disagrees, that's the one trusted here - any
+    "strong_matches" entry whose fuzzy-matched Job Match requirement scored
+    less than STRONG_EVIDENCE is demoted to "partial_matches" instead.
+
+    Finally resolves direct self-contradiction: a skill the model listed in
+    both "strong_matches" and "do_not_claim" in the same response (observed
+    in practice) is kept only in "do_not_claim", the more conservative of
+    the two."""
     known_names = _profile_item_names(profile)
     result = dict(scorecard)
     do_not_claim = list(result.get("do_not_claim") or [])
@@ -554,6 +617,26 @@ def sanitize_scorecard(scorecard: dict, profile: dict) -> dict:
         elif isinstance(m, dict) and m.get("skill"):
             do_not_claim.append(m["skill"])
 
+    partial_matches = list(result.get("partial_matches") or [])
+    if job_match_result:
+        coverage_rows = job_match_result.get("requirement_coverage", [])
+        still_strong = []
+        for m in kept_strong:
+            coverage = _fuzzy_requirement_coverage(m.get("skill", ""), coverage_rows)
+            if coverage and coverage != "STRONG_EVIDENCE":
+                partial_matches.append({
+                    "skill": m.get("skill"),
+                    "gap": "Job Match's evidence scoring rates this as less than strong evidence.",
+                    "evidence": m.get("evidence"),
+                })
+            else:
+                still_strong.append(m)
+        kept_strong = still_strong
+
+    do_not_claim_lower = {s.lower() for s in do_not_claim}
+    kept_strong = [m for m in kept_strong if (m.get("skill") or "").lower() not in do_not_claim_lower]
+
     result["strong_matches"] = kept_strong
+    result["partial_matches"] = partial_matches
     result["do_not_claim"] = do_not_claim
     return result
