@@ -481,31 +481,74 @@ def _ensure_all_roles_present(content: str, work_experience: list[dict]) -> str:
     role with no description or key_responsibilities still gets its "###"
     heading line with no bullets under it, specifically so the career
     timeline never shows an unexplained gap - but a local model has been
-    observed dropping such a role's heading entirely anyway (in practice, the
-    oldest, least-detailed one), silently opening exactly the gap that rule
-    exists to prevent. Detect any role whose company+role combination isn't
-    present as a "###" heading anywhere in the section and insert it."""
+    observed dropping a role's heading entirely anyway, silently opening
+    exactly the gap that rule exists to prevent.
+
+    Rebuilds the whole section in true work_experience order (most-recent-
+    first, via order_index), carrying over each role's existing block
+    verbatim where the model wrote one and inserting a freshly-built block
+    where it didn't - rather than leaving the model's own ordering alone and
+    appending anything missing at the very end. An earlier version did the
+    latter and assumed a dropped role is always the single oldest one; in
+    practice the model can drop any role, and appending a dropped
+    second-oldest role after a genuinely older one the model DID keep
+    silently broke chronological order. Rebuilding from the real order
+    every time makes that impossible regardless of which role(s) got
+    dropped."""
     section_match = re.search(r"(^## PROFESSIONAL EXPERIENCE\s*\n)(.*?)(?=\n## |\Z)", content, re.MULTILINE | re.DOTALL)
     if not section_match:
         return content
     section_body = section_match.group(2)
 
-    heading_lines = re.findall(r"^### .*$", section_body, re.MULTILINE)
+    starts, ends = _role_blocks(section_body)
+    # No "### " heading at all is the same degenerate case the original
+    # version of this function handled gracefully - treat the whole section
+    # as preamble and every role as missing, rather than giving up.
+    preamble = section_body[:starts[0]] if starts else section_body
+    existing_blocks = [section_body[s:e].rstrip("\n") for s, e in zip(starts, ends)]
 
-    def _is_present(role: str, company: str) -> bool:
+    def _heading_role(block: str) -> str:
+        heading_line = block.split("\n", 1)[0].lstrip("#").strip()
+        return heading_line.split("|", 1)[0].strip().lower()
+
+    used_blocks: set[int] = set()
+
+    def _find_existing(role: str, company: str) -> str | None:
         role_l, company_l = role.lower(), company.lower()
-        return any(role_l in h.lower() and company_l in h.lower() for h in heading_lines)
+        # Exact role-title match first: two real roles at the same company
+        # can have one title be a plain substring of the other (e.g.
+        # "Security Operations Analyst" vs "Senior Security Operations
+        # Analyst") - matching by substring alone grabbed the wrong block
+        # for the shorter title and silently dropped the real one for it.
+        for idx, block in enumerate(existing_blocks):
+            if idx in used_blocks:
+                continue
+            heading_line = block.split("\n", 1)[0].lower()
+            if _heading_role(block) == role_l and company_l in heading_line:
+                used_blocks.add(idx)
+                return block
+        # Fall back to substring matching - tolerates the model adding a
+        # bracketed target-title alongside the real one, which
+        # custom_cv_generate.md explicitly allows (e.g. "Senior Security
+        # Operations Analyst (Senior SOC Analyst)").
+        for idx, block in enumerate(existing_blocks):
+            if idx in used_blocks:
+                continue
+            heading_line = block.split("\n", 1)[0].lower()
+            if role_l in heading_line and company_l in heading_line:
+                used_blocks.add(idx)
+                return block
+        return None
 
-    # work_experience arrives ordered most-recent-first (order_index), so
-    # walking it in that order and appending keeps any missing role(s) - in
-    # practice the oldest, trailing entries - in correct chronological
-    # position at the end of the section without needing general mid-list
-    # insertion logic.
-    missing_blocks = []
+    rebuilt_blocks = []
     for e in work_experience:
         role = (e.get("role") or "").strip()
         company = (e.get("company") or "").strip()
-        if not role or not company or _is_present(role, company):
+        if not role or not company:
+            continue
+        existing = _find_existing(role, company)
+        if existing is not None:
+            rebuilt_blocks.append(existing)
             continue
         start = _format_role_date(e.get("start_date") or "")
         end = "Present" if e.get("is_current") else _format_role_date(e.get("end_date") or "")
@@ -518,13 +561,14 @@ def _ensure_all_roles_present(content: str, work_experience: list[dict]) -> str:
         for r in e.get("key_responsibilities") or []:
             if r and r.strip():
                 lines.append(f"- {r.strip()}")
-        missing_blocks.append("\n".join(lines))
+        rebuilt_blocks.append("\n".join(lines))
 
-    if not missing_blocks:
+    if not rebuilt_blocks:
         return content
 
-    section_body = section_body.rstrip("\n") + "\n\n" + "\n\n".join(missing_blocks) + "\n"
-    return content[:section_match.start(2)] + section_body + content[section_match.end(2):]
+    preamble_prefix = (preamble.rstrip("\n") + "\n\n") if preamble.strip() else ""
+    new_body = preamble_prefix + "\n\n".join(rebuilt_blocks) + "\n"
+    return content[:section_match.start(2)] + new_body + content[section_match.end(2):]
 
 
 def _force_correct_platforms_and_tools(content: str, tools_lines: list[str]) -> str:

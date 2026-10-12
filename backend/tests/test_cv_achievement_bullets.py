@@ -270,6 +270,50 @@ class EnsureAllRolesPresentTests(unittest.TestCase):
         result = _ensure_all_roles_present(content, [{"role": "X", "company": "Y", "start_date": "2020-01"}])
         self.assertEqual(result, content)
 
+    def test_a_dropped_middle_role_is_reinserted_in_correct_chronological_order(self):
+        # Real-world case: the model kept the oldest role but dropped the
+        # second-oldest one - appending the missing role at the very end
+        # (the previous behaviour) put it AFTER a genuinely older role,
+        # breaking chronological order. It must land between the role
+        # before it and the role after it, not at the tail regardless.
+        work_experience = [
+            {"role": "Desktop Support Supervisor", "company": "Bodog UK", "start_date": "2011-09",
+             "end_date": "2014-09", "is_current": False, "description": "", "key_responsibilities": []},
+            {"role": "IT Team Leader", "company": "Momentum Worldwide", "start_date": "2008-11",
+             "end_date": "2011-09", "is_current": False, "description": "", "key_responsibilities": ["Team leadership"]},
+            {"role": "Desktop Support", "company": "Interpublic Group", "start_date": "2007-07",
+             "end_date": "2008-11", "is_current": False, "description": "", "key_responsibilities": []},
+        ]
+        # Model output dropped "IT Team Leader" (the middle one) entirely.
+        content = ROLE_CV_TEMPLATE.format(roles=(
+            "### Desktop Support Supervisor | Bodog UK | Sep 2011 - Sep 2014\n\n"
+            "### Desktop Support | Interpublic Group | Jul 2007 - Nov 2008"
+        ))
+        result = _ensure_all_roles_present(content, work_experience)
+        bodog_pos = result.index("Bodog UK")
+        momentum_pos = result.index("Momentum Worldwide")
+        interpublic_pos = result.index("Interpublic Group")
+        self.assertTrue(bodog_pos < momentum_pos < interpublic_pos)
+
+    def test_role_title_that_is_a_substring_of_another_real_title_is_not_confused(self):
+        # Real-world case: "Security Operations Analyst" is a plain
+        # substring of "Senior Security Operations Analyst", both real
+        # roles at the same company - substring-only matching grabbed the
+        # Senior block for both and silently lost the non-Senior one.
+        work_experience = [
+            {"role": "Senior Security Operations Analyst", "company": "timbre Digital", "start_date": "2022-01",
+             "end_date": None, "is_current": True, "description": "", "key_responsibilities": []},
+            {"role": "Security Operations Analyst", "company": "timbre Digital", "start_date": "2018-01",
+             "end_date": "2022-01", "is_current": False, "description": "", "key_responsibilities": ["Triaged alerts."]},
+        ]
+        content = ROLE_CV_TEMPLATE.format(roles=(
+            "### Senior Security Operations Analyst | timbre Digital | Jan 2022 - Present\n\n"
+            "### Security Operations Analyst | timbre Digital | Jan 2018 - Jan 2022\n\n- Triaged alerts."
+        ))
+        result = _ensure_all_roles_present(content, work_experience)
+        self.assertEqual(result.count("### Senior Security Operations Analyst"), 1)
+        self.assertEqual(result.count("### Security Operations Analyst | timbre Digital | Jan 2018"), 1)
+
     def test_same_role_title_at_different_company_not_treated_as_match(self):
         work_experience = [
             {"role": "Cyber Security Analyst", "company": "timbre Digital", "start_date": "2016-11",
