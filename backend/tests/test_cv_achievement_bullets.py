@@ -21,6 +21,7 @@ from app.api.cv import (
     _strip_unbolded_key_skills_duplicate_lines,
     _strip_unsupported_profile_claims,
     _candidate_product_names,
+    _ensure_community_involvement_present,
 )
 
 CV_TEMPLATE = """# Alex Example
@@ -850,6 +851,40 @@ class StripUnsupportedProfileClaimsTests(unittest.TestCase):
         content = self.PROFILE_TEMPLATE.format(profile_text="I have experience with Tines.")
         result = _strip_unsupported_profile_claims(content, {}, ["SOAR (Tines)"])
         self.assertEqual(result, content)
+
+
+class EnsureCommunityInvolvementPresentTests(unittest.TestCase):
+    COMMUNITY = [{
+        "event": "Trace Labs OSINT Search Party CTF - Volunteer Researcher",
+        "participation_type": "participant",
+        "date": "DEF CON 34, 2026",
+    }]
+
+    def test_appends_a_missing_section_at_the_end(self):
+        # Real-world case: the whole section was dropped, even though the
+        # exact same generation had included it correctly in an earlier run.
+        content = "# Alex Example\n\n## EDUCATION\n- A Diploma, A University, 2000\n"
+        result = _ensure_community_involvement_present(content, self.COMMUNITY)
+        self.assertIn("## COMMUNITY INVOLVEMENT", result)
+        self.assertIn("Trace Labs OSINT Search Party CTF - Volunteer Researcher", result)
+
+    def test_does_not_duplicate_an_entry_already_present(self):
+        content = (
+            "# Alex Example\n\n## COMMUNITY INVOLVEMENT\n"
+            "- Trace Labs OSINT Search Party CTF - Volunteer Researcher, participant, DEF CON 34, 2026\n"
+        )
+        result = _ensure_community_involvement_present(content, self.COMMUNITY)
+        self.assertEqual(result, content)
+
+    def test_appends_a_missing_entry_to_an_existing_section(self):
+        content = "# Alex Example\n\n## COMMUNITY INVOLVEMENT\n- Some other event, speaker, 2020\n"
+        result = _ensure_community_involvement_present(content, self.COMMUNITY)
+        self.assertIn("Some other event", result)
+        self.assertIn("Trace Labs OSINT Search Party CTF - Volunteer Researcher", result)
+
+    def test_no_community_data_leaves_content_unchanged(self):
+        content = "# Alex Example\n\n## EDUCATION\n- A Diploma, A University, 2000\n"
+        self.assertEqual(_ensure_community_involvement_present(content, []), content)
 
 
 if __name__ == "__main__":
