@@ -30,6 +30,15 @@ const CONFIDENCE_OPTIONS = [
   { value: 'do_not_include', label: 'Do not include' },
 ]
 
+const OWNERSHIP_OPTIONS = [
+  { value: '', label: 'Not specified' },
+  { value: 'led', label: 'Personally led / owned' },
+  { value: 'significant_contributor', label: 'Significant technical contributor' },
+  { value: 'collaborative', label: 'Worked collaboratively' },
+  { value: 'assisted', label: 'Assisted another team' },
+  { value: 'observed', label: 'Limited exposure / observed' },
+]
+
 const CONFIDENTIALITY_OPTIONS = [
   { value: 'public', label: 'Public' },
   { value: 'cv_safe', label: 'CV-safe' },
@@ -43,6 +52,14 @@ function ConfidenceSelect({ value, onChange }: { value: string; onChange: (e: an
   return (
     <select className="input" value={value} onChange={onChange}>
       {CONFIDENCE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  )
+}
+
+function OwnershipSelect({ value, onChange }: { value: string; onChange: (e: any) => void }) {
+  return (
+    <select className="input" value={value || ''} onChange={onChange}>
+      {OWNERSHIP_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   )
 }
@@ -389,7 +406,8 @@ function AchievementsTab() {
   const blank = {
     title: '', situation: '', action: '', result: '',
     tools_involved: [], skills_demonstrated: [], who_benefited: '',
-    measurable_outcome: '', confidence: 'confirmed_hands_on', confidentiality_level: 'cv_safe', source: '', notes: '',
+    measurable_outcome: '', confidence: 'confirmed_hands_on', ownership: '', employer: '', date_range: '',
+    confidentiality_level: 'cv_safe', source: '', notes: '',
     bullet_plain: '', bullet_strong: '', bullet_senior: '', bullet_ats: '',
   }
   const [form, setForm] = useState<any>(blank)
@@ -451,6 +469,12 @@ function AchievementsTab() {
               <ConfidenceSelect value={form.confidence} onChange={set('confidence')} />
             </div>
             <div>
+              <label className="label">Ownership</label>
+              <OwnershipSelect value={form.ownership} onChange={set('ownership')} />
+            </div>
+            <div><label className="label">Employer</label><input className="input" value={form.employer || ''} onChange={set('employer')} placeholder="Which role this happened at" /></div>
+            <div><label className="label">Date range</label><input className="input" value={form.date_range || ''} onChange={set('date_range')} placeholder="e.g. 2020-2022" /></div>
+            <div>
               <label className="label">Confidentiality</label>
               <ConfidentialitySelect value={form.confidentiality_level || 'cv_safe'} onChange={(e) => setForm({ ...form, confidentiality_level: e.target.value })} />
             </div>
@@ -500,15 +524,21 @@ function AchievementsTab() {
       {items.map((item) => (
         <div key={item.id} className="card p-5">
           <div className="flex items-start justify-between mb-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <p className="text-card-title">{item.title}</p>
               <ConfidenceBadge level={item.confidence} />
+              {item.ownership && (
+                <span className="badge-neutral">{OWNERSHIP_OPTIONS.find((o) => o.value === item.ownership)?.label || item.ownership}</span>
+              )}
             </div>
             <div className="flex gap-2">
               <button onClick={() => startEdit(item)} className="btn-ghost btn-sm">Edit</button>
               <button onClick={() => remove(item.id)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
             </div>
           </div>
+          {(item.employer || item.date_range) && (
+            <p className="text-caption mt-0.5">{[item.employer, item.date_range].filter(Boolean).join(' · ')}</p>
+          )}
           {item.bullet_strong && (
             <p className="text-sm text-gray-700 italic mt-1">"{item.bullet_strong}"</p>
           )}
@@ -678,7 +708,7 @@ function EvidenceTab() {
   const [items, setItems] = useState<any[]>([])
   const [adding, setAdding] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
-  const blank = { title: '', description: '', tools_involved: [], skills_demonstrated: [], outcome: '', value: '', confidence: 'confirmed', notes: '', source: '' }
+  const blank = { title: '', description: '', tools_involved: [], skills_demonstrated: [], outcome: '', value: '', confidence: 'confirmed', ownership: '', notes: '', source: '' }
   const [form, setForm] = useState<any>(blank)
 
   const load = () => getEvidence().then((r: any) => setItems(r))
@@ -719,6 +749,10 @@ function EvidenceTab() {
                 <option value="weak">Weak</option><option value="do_not_use">Do Not Use</option>
               </select>
             </div>
+            <div>
+              <label className="label">Ownership</label>
+              <OwnershipSelect value={form.ownership} onChange={set('ownership')} />
+            </div>
           </div>
           <div className="flex gap-2">
             <button onClick={save} className="btn-primary btn-sm">Save</button>
@@ -730,9 +764,12 @@ function EvidenceTab() {
         <div key={item.id} className="card p-4">
           <div className="flex items-start justify-between">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <p className="text-card-title">{item.title}</p>
                 <ConfidenceBadge level={item.confidence} />
+                {item.ownership && (
+                  <span className="badge-neutral">{OWNERSHIP_OPTIONS.find((o) => o.value === item.ownership)?.label || item.ownership}</span>
+                )}
               </div>
               {item.description && <p className="text-sm text-gray-600 mt-1">{item.description}</p>}
               {item.outcome && <p className="text-xs text-gray-400 mt-1">Outcome: {item.outcome}</p>}

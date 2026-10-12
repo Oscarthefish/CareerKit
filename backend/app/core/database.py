@@ -56,6 +56,10 @@ def init_db():
         ("cv_versions", "recruiter_readiness_result", "TEXT"),
         ("job_applications", "custom_cv", "TEXT"),
         ("job_applications", "custom_cv_fixes_applied", "TEXT"),
+        ("achievements", "ownership", "VARCHAR(30)"),
+        ("achievements", "employer", "VARCHAR(200)"),
+        ("achievements", "date_range", "VARCHAR(100)"),
+        ("evidence_items", "ownership", "VARCHAR(30)"),
     ]
     inspector = inspect(engine)
     with engine.begin() as conn:

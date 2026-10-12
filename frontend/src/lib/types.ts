@@ -95,6 +95,9 @@ export interface Achievement {
   who_benefited: string | null
   measurable_outcome: string | null
   confidence: string
+  ownership: string | null
+  employer: string | null
+  date_range: string | null
   confidentiality_level: string
   bullet_plain: string | null
   bullet_strong: string | null
@@ -126,6 +129,7 @@ export interface EvidenceItem {
   outcome: string | null
   value: string | null
   confidence: string
+  ownership: string | null
   confidentiality_level: string
   notes: string | null
   source: string | null

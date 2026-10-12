@@ -144,6 +144,13 @@ class Achievement(Base):
     who_benefited = Column(Text)
     measurable_outcome = Column(Text)
     confidence = Column(String(30), default="confirmed_hands_on")
+    # led, significant_contributor, collaborative, assisted, observed - see
+    # core/vocab.py OWNERSHIP_LEVELS. Nullable/unset on purpose: an achievement
+    # with no recorded ownership level makes no ownership claim either way,
+    # rather than silently defaulting to one.
+    ownership = Column(String(30))
+    employer = Column(String(200))
+    date_range = Column(String(100))
     confidentiality_level = Column(String(20), default="cv_safe")
     bullet_plain = Column(Text)
     bullet_strong = Column(Text)
@@ -181,6 +188,8 @@ class EvidenceItem(Base):
     outcome = Column(Text)
     value = Column(Text)
     confidence = Column(String(30), default="confirmed_hands_on")
+    # See Achievement.ownership above - same vocabulary, same nullable-by-default reasoning.
+    ownership = Column(String(30))
     confidentiality_level = Column(String(20), default="cv_safe")
     notes = Column(Text)
     source = Column(String(300))

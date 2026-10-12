@@ -254,6 +254,9 @@ class AchievementCreate(BaseModel):
     who_benefited: Optional[str] = None
     measurable_outcome: Optional[str] = None
     confidence: str = "confirmed_hands_on"
+    ownership: Optional[str] = None
+    employer: Optional[str] = None
+    date_range: Optional[str] = None
     confidentiality_level: str = "cv_safe"
     source: Optional[str] = None
     notes: Optional[str] = None
@@ -339,6 +342,9 @@ def _serialize_achievement(row: Achievement) -> dict:
         "who_benefited": row.who_benefited,
         "measurable_outcome": row.measurable_outcome,
         "confidence": row.confidence,
+        "ownership": row.ownership,
+        "employer": row.employer,
+        "date_range": row.date_range,
         "confidentiality_level": row.confidentiality_level,
         "bullet_plain": row.bullet_plain,
         "bullet_strong": row.bullet_strong,
@@ -416,6 +422,7 @@ class EvidenceCreate(BaseModel):
     outcome: Optional[str] = None
     value: Optional[str] = None
     confidence: str = "confirmed_hands_on"
+    ownership: Optional[str] = None
     confidentiality_level: str = "cv_safe"
     notes: Optional[str] = None
     source: Optional[str] = None
@@ -468,6 +475,7 @@ def _serialize_evidence(row: EvidenceItem) -> dict:
         "outcome": row.outcome,
         "value": row.value,
         "confidence": row.confidence,
+        "ownership": row.ownership,
         "confidentiality_level": row.confidentiality_level,
         "notes": row.notes,
         "source": row.source,
