@@ -643,9 +643,10 @@ def sanitize_scorecard(scorecard: dict, profile: dict, job_match_result: dict | 
     "Cisco AMP").
 
     Finally resolves direct self-contradiction: a skill the model listed in
-    both "strong_matches" and "do_not_claim" in the same response (observed
-    in practice) is kept only in "do_not_claim", the more conservative of
-    the two."""
+    both "strong_matches" and "do_not_claim" - or both "partial_matches" and
+    "do_not_claim" (observed in practice, e.g. "insurance claims
+    management" in both at once) - in the same response is kept only in
+    "do_not_claim", the more conservative of the two."""
     known_names = _profile_item_names(profile)
     result = dict(scorecard)
     do_not_claim = list(result.get("do_not_claim") or [])
@@ -708,6 +709,12 @@ def sanitize_scorecard(scorecard: dict, profile: dict, job_match_result: dict | 
 
     do_not_claim_lower = {s.lower() for s in do_not_claim}
     kept_strong = [m for m in kept_strong if (m.get("skill") or "").lower() not in do_not_claim_lower]
+    # Same self-contradiction, a different field pair: a skill the model
+    # listed in both "partial_matches" and "do_not_claim" in the same
+    # response (observed in practice - "insurance claims management" in
+    # both at once). do_not_claim is the more conservative of the two here
+    # as well.
+    partial_matches = [m for m in partial_matches if (m.get("skill") or "").lower() not in do_not_claim_lower]
 
     result["strong_matches"] = kept_strong
     result["partial_matches"] = partial_matches

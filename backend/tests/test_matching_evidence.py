@@ -617,6 +617,18 @@ class SanitizeScorecardTests(unittest.TestCase):
         self.assertEqual(result["strong_matches"], [])
         self.assertIn("Fraud analytics systems", result["do_not_claim"])
 
+    def test_resolves_self_contradiction_between_partial_match_and_do_not_claim(self):
+        # Real-world case: "insurance claims management" listed under both
+        # "partial_matches" and "do_not_claim" in the same response.
+        scorecard = {
+            "strong_matches": [],
+            "partial_matches": [{"skill": "Insurance claims management", "gap": "No direct experience."}],
+            "do_not_claim": ["Insurance claims management"],
+        }
+        result = sanitize_scorecard(scorecard, PROFILE)
+        self.assertEqual(result["partial_matches"], [])
+        self.assertIn("Insurance claims management", result["do_not_claim"])
+
     def test_demotes_a_strong_match_job_match_rates_only_partial(self):
         # Real-world case: the model cited a genuine achievement (so the
         # existence check above passes it) as "strong" evidence for "fraud
