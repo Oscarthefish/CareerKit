@@ -709,6 +709,240 @@ def _strip_unsupported_profile_claims(content: str, profile: dict, jd_terminolog
     return content[:section_match.start(2)] + new_body + "\n" + content[section_match.end(2):]
 
 
+def _strip_unsupported_claims_by_line(
+    content: str, profile: dict, jd_terminology: list[str], section_heading: str
+) -> str:
+    """Line-granularity sibling of _strip_unsupported_profile_claims, for a
+    multi-line section where each line is its own self-contained claim (e.g.
+    custom_cv_generate.md's "## CORE CAPABILITIES", one bold-labelled
+    capability per line) rather than a single flowing paragraph. Joining
+    surviving SENTENCES back together across the whole section body, the way
+    the paragraph version does, would merge separate capability lines into
+    one and destroy the section's line-per-group structure - dropping the
+    whole offending LINE instead preserves it."""
+    candidates = _candidate_product_names(jd_terminology)
+    if not candidates:
+        return content
+
+    profile_blob = json.dumps(profile).lower()
+    unsupported = [c for c in candidates if c.lower() not in profile_blob]
+    if not unsupported:
+        return content
+
+    pattern = re.compile(rf"(^## {re.escape(section_heading)}\s*\n)(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
+    section_match = pattern.search(content)
+    if not section_match:
+        return content
+    section_body = section_match.group(2)
+
+    lines = section_body.split("\n")
+    kept = [
+        line for line in lines
+        if not any(re.search(rf"\b{re.escape(term)}\b", line, re.IGNORECASE) for term in unsupported)
+    ]
+    new_body = "\n".join(kept)
+    if not new_body.strip():
+        return content  # dropping every line would leave the section blank - leave as-is rather than blank it
+
+    return content[:section_match.start(2)] + new_body + content[section_match.end(2):]
+
+
+def _non_dataless_roles(work_experience: list[dict]) -> list[dict]:
+    """custom_cv_generate.md's PROFESSIONAL EXPERIENCE excludes a role with no
+    description and no key_responsibilities entirely - it belongs in
+    ADDITIONAL BACKGROUND instead (see _force_additional_background below),
+    unlike the Master CV format which keeps a heading-only block for it (see
+    _strip_bullets_for_dataless_roles). Filtering the role list down to this
+    before running the shared _remove_fabricated_role_headings/
+    _ensure_all_roles_present safety nets below makes them remove any
+    dataless role block the model wrote and rebuild only the roles that
+    belong in this section, with no new matching logic needed."""
+    return [
+        e for e in work_experience
+        if (e.get("description") or "").strip() or (e.get("key_responsibilities") or [])
+    ]
+
+
+def _normalize_core_capabilities(content: str, tools_lines: list[str]) -> str:
+    """Safety net: custom_cv_generate.md asks for CORE CAPABILITIES as 4-6
+    one-line "**Label:** sentence" groups under the single "## CORE
+    CAPABILITIES" heading - but a local model has been observed instead
+    giving each group its own "### Label:" sub-heading, followed by several
+    separate bullet lines rather than one sentence, with some of those
+    bullets splicing in a literal, correctly-formatted SELECTED TECHNOLOGIES
+    line verbatim (e.g. "SIEM & Investigation: Jira", sometimes run together
+    with real capability content in the same comma-separated bullet, e.g.
+    "Incident Response, Maltego, SIEM & Investigation: Jira, Endpoint &
+    Detection: Cisco AMP") rather than real prose - that content already has
+    its own correctly-labelled home under SELECTED TECHNOLOGIES and has no
+    business being restated here. Strips any such leaked line as a literal
+    substring wherever it appears, demotes any "###" sub-heading back to the
+    required bold-inline form, and folds whatever real content remains under
+    each label into that label's own single comma-joined line - dropping a
+    group entirely if nothing but a tech-list leak was left under it, rather
+    than keep an empty, padding-only group."""
+    section_match = re.search(r"(^## CORE CAPABILITIES\s*\n)(.*?)(?=\n## |\Z)", content, re.MULTILINE | re.DOTALL)
+    if not section_match:
+        return content
+    section_body = section_match.group(2)
+
+    for line in tools_lines:
+        section_body = section_body.replace(line, "")
+    # Clean up the punctuation a removed line leaves dangling behind it -
+    # runs of now-empty ", , ," separators and a trailing comma at end of
+    # line. A label's own trailing colon (e.g. "### Global SOC Operations: "
+    # with nothing real left after it) is deliberately left alone - the
+    # label_pattern matching below needs that colon to recognise the line as
+    # a label at all; an empty "rest" after it is handled there instead.
+    section_body = re.sub(r"[ \t]*,[ \t,]*", ", ", section_body)
+    section_body = re.sub(r",\s*$", "", section_body, flags=re.MULTILINE)
+    section_body = re.sub(r":\s*,\s*", ": ", section_body)
+
+    label_pattern = re.compile(r"^(?:#{2,3}\s*|\*\*)(.+?):(?:\*\*)?\s*(.*)$")
+    groups: list[list] = []
+    for raw_line in section_body.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        m = label_pattern.match(line) if line.startswith(("#", "*")) else None
+        if m:
+            label, rest = m.group(1).strip(), m.group(2).strip()
+            groups.append([label, [rest] if rest else []])
+            continue
+        bullet = line.lstrip("-").strip()
+        if bullet and groups:
+            groups[-1][1].append(bullet)
+
+    if not groups:
+        return content
+
+    new_lines = [f"**{label}:** " + ", ".join(parts) for label, parts in groups if parts]
+    if not new_lines:
+        return content
+    new_body = "\n".join(new_lines) + "\n"
+    return content[:section_match.start(2)] + new_body + content[section_match.end(2):]
+
+
+def _force_selected_technologies(content: str, tools_lines: list[str]) -> str:
+    """Safety net: custom_cv_generate.md's "## SELECTED TECHNOLOGIES" section
+    is meant to be a verbatim copy of platforms_and_tools_display (already
+    grouped into functional categories and filtered for relevance - see
+    selection.py/profile_service.py), the same way the Master CV's Platforms &
+    Tools line is - but, mirroring _force_correct_platforms_and_tools above, a
+    long list can get truncated, reordered or dropped by a local model. Force
+    the section to the correct value after the fact rather than trust the
+    copy."""
+    if not tools_lines:
+        return content
+
+    correct_block = "\n".join(tools_lines)
+    body_pattern = re.compile(r"(^## SELECTED TECHNOLOGIES\s*\n)(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
+    if body_pattern.search(content):
+        content = body_pattern.sub(lambda m: m.group(1) + correct_block + "\n", content, count=1)
+    else:
+        # Section missing entirely - insert it directly before PROFESSIONAL
+        # EXPERIENCE, a heading guaranteed to exist in valid output, rather
+        # than lose the section; exact position among sections is cosmetic.
+        exp_pattern = re.compile(r"^## PROFESSIONAL EXPERIENCE\s*$", re.MULTILINE)
+        new_section = f"## SELECTED TECHNOLOGIES\n{correct_block}\n\n"
+        if exp_pattern.search(content):
+            content = exp_pattern.sub(lambda m: new_section + m.group(0), content, count=1)
+        else:
+            content = content.rstrip("\n") + "\n\n" + new_section
+
+    # Guard against the model also leaking the same lines unlabelled
+    # elsewhere - same sentinel-protection pattern
+    # _force_correct_platforms_and_tools uses for the equivalent failure.
+    sentinel = "\x00SELECTED_TECHNOLOGIES_BLOCK\x00"
+    content = content.replace(correct_block, sentinel, 1)
+    for line in tools_lines:
+        content = re.sub(r"\n" + re.escape(line) + r"(?=\n|\Z)", "", content)
+    return content.replace(sentinel, correct_block, 1)
+
+
+def _force_certifications_and_training(content: str, certifications: list[dict], training: list[dict]) -> str:
+    """Safety net: custom_cv_generate.md merges certifications and training
+    into one "## CERTIFICATIONS & TRAINING" section (unlike the Master CV's
+    separate "## CERTIFICATIONS" heading) - a pipe-separated certifications
+    line, plus a "Relevant training:" line underneath when there's any
+    training data. Force both to the verbatim display_line values, the same
+    verbatim-force-copy discipline _force_correct_certifications uses for the
+    Master CV, rather than trust free retyping of either list."""
+    cert_lines = [c.get("display_line") for c in certifications if c.get("display_line")]
+    training_lines = [t.get("display_line") for t in training if t.get("display_line")]
+    if not cert_lines and not training_lines:
+        return content
+
+    body_parts = []
+    if cert_lines:
+        body_parts.append(" | ".join(cert_lines))
+    if training_lines:
+        body_parts.append("Relevant training: " + "; ".join(training_lines))
+    correct_block = "\n".join(body_parts)
+
+    pattern = re.compile(r"(^## CERTIFICATIONS & TRAINING\s*\n)(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
+    if pattern.search(content):
+        return pattern.sub(lambda m: m.group(1) + correct_block + "\n", content, count=1)
+
+    # Missing entirely - insert directly after PROFESSIONAL EXPERIENCE, which
+    # is always present, rather than lose the section.
+    exp_pattern = re.compile(r"(^## PROFESSIONAL EXPERIENCE\s*\n)(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
+    exp_match = exp_pattern.search(content)
+    new_section = f"## CERTIFICATIONS & TRAINING\n{correct_block}\n"
+    if exp_match:
+        return content[:exp_match.end(2)] + "\n" + new_section + content[exp_match.end(2):]
+    return content.rstrip("\n") + "\n\n" + new_section
+
+
+def _force_additional_background(content: str, work_experience: list[dict], education: list[dict]) -> str:
+    """Safety net: custom_cv_generate.md compresses any dataless role (no
+    description, no key_responsibilities - already excluded from
+    PROFESSIONAL EXPERIENCE itself, see _non_dataless_roles above) plus
+    education into one short "## ADDITIONAL BACKGROUND" paragraph, rather
+    than lose them from the CV entirely or give them their own full
+    role/education headings the way the Master CV does. Built
+    deterministically from the same display_line / role+company+date fields
+    used elsewhere, rather than trust free retyping of dates and
+    qualification names."""
+    dataless = [
+        e for e in work_experience
+        if not (e.get("description") or "").strip() and not (e.get("key_responsibilities") or [])
+    ]
+
+    def _role_line(e: dict) -> str:
+        role = (e.get("role") or "").strip()
+        company = (e.get("company") or "").strip()
+        start = _format_role_date(e.get("start_date") or "")
+        end = "Present" if e.get("is_current") else _format_role_date(e.get("end_date") or "")
+        date_range = " - ".join(p for p in (start, end) if p)
+        label = f"{role}, {company}" if role and company else (role or company)
+        return f"{label} ({date_range})" if date_range else label
+
+    role_lines = [_role_line(e) for e in dataless if (e.get("role") or "").strip() or (e.get("company") or "").strip()]
+    edu_lines = [e.get("display_line") for e in education if e.get("display_line")]
+
+    parts = []
+    if role_lines:
+        parts.append("Earlier roles: " + "; ".join(role_lines) + ".")
+    if edu_lines:
+        parts.append("Education: " + "; ".join(edu_lines) + ".")
+    if not parts:
+        return content
+    correct_block = " ".join(parts)
+
+    pattern = re.compile(r"(^## ADDITIONAL BACKGROUND\s*\n)(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
+    if pattern.search(content):
+        return pattern.sub(lambda m: m.group(1) + correct_block + "\n", content, count=1)
+
+    # Missing entirely - this is meant to sit just before COMMUNITY
+    # INVOLVEMENT, which has its own append-at-end safety net (see
+    # _ensure_community_involvement_present below) - appending here too means
+    # a COMMUNITY INVOLVEMENT section the model already wrote could end up
+    # before this one, but that ordering mismatch is purely cosmetic and
+    # never loses data.
+    return content.rstrip("\n") + "\n\n## ADDITIONAL BACKGROUND\n" + correct_block + "\n"
+
+
 def _ensure_community_involvement_present(content: str, community_involvement: list[dict]) -> str:
     """Safety net: both cv_generation.md and custom_cv_generate.md instruct
     that a COMMUNITY INVOLVEMENT section should be included whenever the
@@ -780,6 +1014,40 @@ def apply_cv_safety_nets(content: str, profile: dict, jd_terminology: list[str] 
     content = _ensure_all_achievements_present(content, profile.get("achievements", []))
     content = _dedupe_achievement_bullets(content, profile.get("achievements", []))
     content = _force_correct_certifications(content, profile.get("certifications", []))
+    content = _ensure_community_involvement_present(content, profile.get("community_involvement", []))
+    return content
+
+
+def apply_custom_cv_safety_nets(content: str, profile: dict, jd_terminology: list[str] | None = None) -> str:
+    """Custom-CV-specific sibling of apply_cv_safety_nets, for the
+    restructured custom_cv_generate.md format: two-paragraph PROFESSIONAL
+    PROFILE, prose CORE CAPABILITIES (replacing the Master CV's inline
+    Security Domains/Leadership & People lines), deterministic SELECTED
+    TECHNOLOGIES (its own heading, replacing the inline Platforms & Tools
+    line), dataless roles folded into ADDITIONAL BACKGROUND instead of
+    appearing heading-only in PROFESSIONAL EXPERIENCE, and a merged
+    CERTIFICATIONS & TRAINING section. Shares every safety net that doesn't
+    depend on that layout difference (achievement enrichment/completeness/
+    dedup, project rebuilding, community involvement, blank-bullet cleanup)
+    with apply_cv_safety_nets above - kept as its own explicit function
+    rather than parameterising the shared one, since the two formats' key-
+    skills/platforms-and-tools handling genuinely diverges rather than
+    merely varying by a flag."""
+    content = re.sub(r"\n[ \t]*-[ \t]*\n", "\n", content)
+    content = _strip_unsupported_profile_claims(content, profile, jd_terminology or [])
+    content = _normalize_core_capabilities(content, profile.get("platforms_and_tools_display", []))
+    content = _strip_unsupported_claims_by_line(content, profile, jd_terminology or [], "CORE CAPABILITIES")
+    content = _strip_trailing_line_commas(content)
+    non_dataless_roles = _non_dataless_roles(profile.get("work_experience", []))
+    content = _force_selected_technologies(content, profile.get("platforms_and_tools_display", []))
+    content = _force_correct_projects(content, profile.get("projects", []))
+    content = _remove_fabricated_role_headings(content, non_dataless_roles)
+    content = _ensure_all_roles_present(content, non_dataless_roles)
+    content = _enrich_achievement_bullets(content, profile.get("achievements", []))
+    content = _ensure_all_achievements_present(content, profile.get("achievements", []))
+    content = _dedupe_achievement_bullets(content, profile.get("achievements", []))
+    content = _force_certifications_and_training(content, profile.get("certifications", []), profile.get("training", []))
+    content = _force_additional_background(content, profile.get("work_experience", []), profile.get("education", []))
     content = _ensure_community_involvement_present(content, profile.get("community_involvement", []))
     return content
 

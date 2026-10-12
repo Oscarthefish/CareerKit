@@ -47,21 +47,20 @@ EXACT FORMAT TO USE:
 email@example.com | 021 000 0000 | Auckland, New Zealand | linkedin.com/in/handle
 
 ## PROFESSIONAL PROFILE
-Four to six sentences, written in first person, targeted specifically at the role and company above - not a generic career summary. Open with the candidate's relevant identity for THIS role (drawing on the selected evidence, not the full career), reflect the seniority level this role calls for, and name the strongest matching areas from the selected profile data. Use the employer's own terminology where the evidence genuinely supports it. Do not copy a generic profile unchanged - every sentence should earn its place against this specific vacancy. No generic phrases like "passionate", "hardworking", "dynamic", "results-driven" or "team player" - let the evidence carry the weight instead.
+Two short paragraphs, each roughly 40-60 words, written in first person, targeted specifically at the role and company above - not a generic career summary. The first paragraph establishes professional identity, seniority level and the strongest matching areas from the selected profile data, using the employer's own terminology where the evidence genuinely supports it. The second paragraph covers how the candidate works - collaboration, mentoring or leadership where the data supports it, and a genuine personal interest if one is given - not more career history repeated from the first paragraph. Every sentence should earn its place against this specific vacancy. No generic phrases like "passionate", "hardworking", "dynamic", "results-driven" or "team player" - let the evidence carry the weight instead.
 
-## KEY SKILLS
-**Security Operations & Incident Response:** dense, comma-separated list of specific hands-on skills drawn from the data, not a generic list
-**Platforms & Tools:**
-SIEM: [product]
-EDR / XDR: [product]
-(one line per tool category, no "- " bullet, just "Category: product, product")
+## CORE CAPABILITIES
+**Group label:** one sentence naming several specific real skills, tools or achievement themes from the data
 
-**Security Domains:** the broader knowledge domains the skills sit under
-**Leadership & People:** team leadership, mentoring, recruiting and interviewing, stakeholder and vendor management, technical reporting — only if the data supports it
+Write 4 to 6 groups that organise the candidate's selected skills and achievements into natural, readable themes grounded in what the data actually shows - do not force them into a fixed, generic template. Each group is EXACTLY ONE LINE: a short, plain-language bold label (2-4 words), a colon, and one flowing sentence in your own words combining several real, specific items from the data (skill names, tool names, or a brief description of relevant achievement/responsibility work) - never a vague summary with no real content in it, and never a single isolated skill with nothing grouped alongside it. For a security operations candidate this might produce groups like "Incident response & investigation", "Detection & threat analysis", "Global SOC operations", "Mentoring & operational improvement" and "Tooling & automation" - but the actual groups, their labels and their content must come from this candidate's own selected data, not be copied from this example.
 
-The candidate profile's "platforms_and_tools_display" field already contains the exact, correct lines for Platforms & Tools, pre-built and already filtered to what's relevant to this role. Put "**Platforms & Tools:**" on its own line, then output each string in that list verbatim on its own line directly after, in the order given, with no "- " bullet prefix. Do not add, remove, reorder, merge, split, or invent any category or product beyond exactly what's in that list. If the list is empty, omit the Platforms & Tools line entirely.
+Do NOT give a group its own "###" or "##" sub-heading - every group is a single "**Label:** sentence" line directly under the one "## CORE CAPABILITIES" heading, never split into multiple lines or bullets underneath it. Do NOT copy a "Category: Product, Product" line from platforms_and_tools_display into this section in any form, whole or run together with other content in the same sentence - that data already has its own correctly-labelled place under SELECTED TECHNOLOGIES below and must never be repeated here. Write this section as a human would describe their own strengths out loud, not as a restructured dump of the data's field values.
 
-Security Operations & Incident Response, Security Domains and Leadership & People remain plain paragraphs, each starting with a bold category label exactly as shown, followed by a colon and comma-separated content. All four categories must stay under the one "## KEY SKILLS" heading — never split any of them out into their own "##" heading. There is no separate TOOLS AND TECHNOLOGIES section.
+## SELECTED TECHNOLOGIES
+Group label: product, product
+(one line per group, no "- " bullet and no bold label, just "Group: product, product")
+
+The candidate profile's "platforms_and_tools_display" field already contains the exact, correct lines for this section, pre-built and already grouped and filtered to what's relevant to this role. Output each string in that list verbatim on its own line, in the order given. Do not add, remove, reorder, merge, split, bold, or invent any group or product beyond exactly what's in that list. If the list is empty, omit this section entirely.
 
 ## PROFESSIONAL EXPERIENCE
 
@@ -74,7 +73,7 @@ Security Operations & Incident Response, Security Domains and Leadership & Peopl
 
 - Bullet point
 
-Every role in the profile data must appear as a "###" heading, in the order given, even one with no bullets at all (so the career timeline has no unexplained gap) — but only ever write bullets from the "key_responsibilities" actually given for that role; they have already been narrowed down to the most relevant ones for this vacancy, so do not add more from general knowledge of the role title.
+Only include a role here if it has real content to write from - a description or at least one entry in its "key_responsibilities". A role in the profile data with neither belongs in ADDITIONAL BACKGROUND below instead, not here. For every role that IS included, write only from its own given "key_responsibilities" - they have already been narrowed down to the most relevant ones for this vacancy, so do not add more from general knowledge of the role title, and do not invent a bullet for a role that has none given.
 
 ## SELECTED ACHIEVEMENTS
 - Strong achievement bullet with a real, supported outcome
@@ -86,15 +85,14 @@ Each achievement record has a short "title" plus fuller "situation" / "action" /
 
 If the candidate profile's "projects" list is empty, omit this section entirely.
 
-## CERTIFICATIONS
-- Certification Name (Abbreviation), Issuer, earned Year
-- Another Certification, Issuer (In Progress)
+## CERTIFICATIONS & TRAINING
+Certification display_line | Certification display_line
+Relevant training: training display_line; training display_line
 
-## PROFESSIONAL TRAINING
-- Training or course title, Provider, Year
+List every certification's display_line verbatim, separated by " | ", as one paragraph (let it wrap naturally - do not add your own line breaks within it). On the line directly below, if there is any training data, write "Relevant training:" followed by every training entry's display_line, separated by "; ". Omit the certifications line entirely if there are none; omit the "Relevant training:" line entirely if there is no training data; omit this whole section if both are empty.
 
-## EDUCATION
-- Qualification, Institution, Year
+## ADDITIONAL BACKGROUND
+One short paragraph of plain prose covering, where the data has them: (a) any work_experience role NOT included in PROFESSIONAL EXPERIENCE above because it had no description or key_responsibilities - name the role, company and date range for each; (b) education - name each qualification, institution and year. For example: "Earlier roles: IT Team Leader, Momentum Worldwide (Nov 2008 - Sep 2011); Desktop Support, Interpublic Group (Jul 2007 - Nov 2008). Education: Advanced PC Servicing Diploma, Massey University (2000)." Omit the "Earlier roles:" part if every role in the data had real content and was already included above; omit the "Education:" part if there is no education data; omit this whole section if there's nothing for either part.
 
 ## COMMUNITY INVOLVEMENT
 - Event or organisation, participation type, and any result mentioned, phrased as a normal sentence
@@ -107,7 +105,7 @@ Rules:
 - Do not invent experience, dates, employers, tools, certifications or outcomes
 - Omit any section for which there is no data
 - Never write a placeholder value anywhere on the CV (e.g. "(Unknown)", "(N/A)", "(not specified)", "TBC")
-- Render certifications, training and education under their own heading using each item's display_line; never move an item between sections and never list the same item under two headings
+- Use each certification and training item's display_line verbatim; never move an item between sections and never list the same item under two headings
 - If the candidate profile includes a "community_involvement" list, include a COMMUNITY INVOLVEMENT section for it. If empty, omit the section entirely.
 
 Candidate Profile (already selected and prioritised for this vacancy):

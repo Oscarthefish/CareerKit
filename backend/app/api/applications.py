@@ -430,7 +430,7 @@ async def generate_custom_cv(app_id: int, db: Session = Depends(get_db)):
     from ..services.ats.checks import run_ats_check
     from ..services.matching.selection import select_evidence_for_cv
     from ..services.recruiter.scoring import _validate_review, compute_recruiter_readiness
-    from .cv import apply_cv_safety_nets
+    from .cv import apply_custom_cv_safety_nets
 
     app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
     if not app:
@@ -479,7 +479,7 @@ async def generate_custom_cv(app_id: int, db: Session = Depends(get_db)):
             detail=f"The local model returned an unusable response ({e}). Try again, "
                    "or pick a larger model in Settings.",
         )
-    custom_cv = apply_cv_safety_nets(custom_cv, selected_profile, jd_terminology=terminology)
+    custom_cv = apply_custom_cv_safety_nets(custom_cv, selected_profile, jd_terminology=terminology)
 
     selection_summary = (
         f"Selected {len(selected_profile.get('achievements', []))} of {len(profile.get('achievements', []))} achievements "
