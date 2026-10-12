@@ -318,6 +318,28 @@ class DedupeAchievementBulletsTests(unittest.TestCase):
         result = _dedupe_achievement_bullets(content, achievements)
         self.assertEqual(result, content)
 
+    def test_drops_a_paraphrase_that_dodges_the_full_bullet_overlap_check(self):
+        # Real-world case: a different verb and reshuffled supporting detail
+        # bring the overlap against the full enriched titled bullet down to
+        # exactly 0.5 (the check requires > 0.5, so it's missed), but the
+        # paraphrase still overlaps the achievement's own title at 0.86.
+        achievements = [{
+            "title": "Helped build a global 24/7 SOC across three locations",
+            "result": "Successfully built out the 6-person local SOC team as part of the wider global "
+                       "24/7 programme; the role was made redundant upon completion of the build-out.",
+        }]
+        content = CV_TEMPLATE.format(bullets=(
+            "- Contributed to building a global 24/7 SOC across three locations, helping to grow the "
+            "local SOC team from 2 to 6 people (two junior, two mid-level, two senior) over 12 months, "
+            "as part of a global 24/7 SOC build across three locations.\n"
+            "- Helped build a global 24/7 SOC across three locations. Successfully built out the "
+            "6-person local SOC team as part of the wider global 24/7 programme; the role was made "
+            "redundant upon completion of the build-out."
+        ))
+        result = _dedupe_achievement_bullets(content, achievements)
+        self.assertEqual(result.count("24/7 SOC across three locations"), 1)
+        self.assertIn("Helped build a global 24/7 SOC", result)
+
 
 class StripTrailingLineCommasTests(unittest.TestCase):
     def test_strips_dangling_trailing_comma(self):

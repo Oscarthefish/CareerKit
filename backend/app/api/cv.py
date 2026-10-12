@@ -319,6 +319,7 @@ def _dedupe_achievement_bullets(content: str, achievements: list[dict]) -> str:
     lines = section_body.split("\n")
 
     titles_lower = [(a.get("title") or "").strip().lower() for a in achievements if (a.get("title") or "").strip()]
+    title_word_sets = [_significant_words(t) for t in titles_lower]
 
     def _starts_with_a_title(line: str) -> bool:
         text = line.lstrip("-").strip().lower()
@@ -345,6 +346,28 @@ def _dedupe_achievement_bullets(content: str, achievements: list[dict]) -> str:
             if overlap > 0.5:
                 is_dup = True
                 break
+        # A paraphrase can drift far enough from an achievement's enriched
+        # bullet (different verbs, different supporting detail) to dodge the
+        # check above while still clearly restating the achievement itself -
+        # e.g. "Contributed to building a global 24/7 SOC across three
+        # locations, helping to grow the local SOC team from 2 to 6 people..."
+        # vs. the titled bullet "Helped build a global 24/7 SOC across three
+        # locations. Successfully built out the 6-person local SOC team..."
+        # scores exactly 0.5 against the full enriched bullet (missed, the
+        # check above requires > 0.5) because the extra detail on both sides
+        # dilutes the overlap - but scores 0.86 against the achievement's own
+        # title alone, a short and specific enough string that a high match
+        # there is a strong signal by itself. Use a higher bar here (0.75)
+        # than the 0.5 above, since a short title has less room to absorb an
+        # incidental, non-duplicate overlap.
+        if not is_dup and words:
+            for t_words in title_word_sets:
+                if not t_words:
+                    continue
+                overlap = len(words & t_words) / min(len(words), len(t_words))
+                if overlap >= 0.75:
+                    is_dup = True
+                    break
         if not is_dup:
             kept.append(line)
 
