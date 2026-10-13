@@ -415,6 +415,7 @@ function AchievementsTab() {
     measurable_outcome: '', confidence: 'confirmed_hands_on', ownership: '', employer: '', date_range: '',
     confidentiality_level: 'cv_safe', source: '', notes: '',
     bullet_plain: '', bullet_strong: '', bullet_senior: '', bullet_ats: '',
+    always_include: false,
   }
   const [form, setForm] = useState<any>(blank)
   const [generatingBullets, setGeneratingBullets] = useState(false)
@@ -489,6 +490,19 @@ function AchievementsTab() {
           <TagInput value={form.tools_involved} onChange={(v) => setForm({ ...form, tools_involved: v })} label="Tools Involved" placeholder="Add tool..." />
           <TagInput value={form.skills_demonstrated} onChange={(v) => setForm({ ...form, skills_demonstrated: v })} label="Skills Demonstrated" placeholder="Add skill..." />
 
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={form.always_include}
+              onChange={(e) => setForm({ ...form, always_include: e.target.checked })}
+            />
+            Always include in Custom CV, regardless of job
+          </label>
+          <p className="text-caption -mt-2">
+            Use this for the achievements you never want left out — e.g. because a recruiter has told you
+            it's a highlight. Everything else is still selected automatically based on relevance to each job.
+          </p>
+
           <div className="flex items-center gap-3">
             <button onClick={genBullets} disabled={generatingBullets} className="btn-secondary btn-sm">
               {generatingBullets ? 'Generating...' : 'Generate Bullet Options (AI)'}
@@ -535,6 +549,11 @@ function AchievementsTab() {
               <ConfidenceBadge level={item.confidence} />
               {item.ownership && (
                 <span className="badge-neutral">{OWNERSHIP_OPTIONS.find((o) => o.value === item.ownership)?.label || item.ownership}</span>
+              )}
+              {item.always_include && (
+                <span className="badge-warning" title="Always included in your Custom CV, regardless of job">
+                  Always included
+                </span>
               )}
             </div>
             <div className="flex gap-2">

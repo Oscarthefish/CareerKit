@@ -265,6 +265,7 @@ class AchievementCreate(BaseModel):
     confidentiality_level: str = "cv_safe"
     source: Optional[str] = None
     notes: Optional[str] = None
+    always_include: bool = False
 
 
 class GenerateBulletsRequest(BaseModel):
@@ -357,6 +358,7 @@ def _serialize_achievement(row: Achievement) -> dict:
         "bullet_ats": row.bullet_ats,
         "source": row.source,
         "notes": row.notes,
+        "always_include": bool(row.always_include),
     }
 
 

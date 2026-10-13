@@ -158,6 +158,12 @@ class Achievement(Base):
     bullet_ats = Column(Text)
     source = Column(String(300))
     notes = Column(Text)
+    # The candidate's own explicit "never drop this" flag - overrides the
+    # automatic per-job relevance ranking in matching/selection.py, which
+    # can't reliably guess that one specific achievement is the one a
+    # recruiter always wants to see regardless of how a given job's
+    # citation pass happens to score it.
+    always_include = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

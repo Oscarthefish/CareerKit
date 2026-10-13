@@ -61,6 +61,7 @@ def init_db():
         ("achievements", "date_range", "VARCHAR(100)"),
         ("evidence_items", "ownership", "VARCHAR(30)"),
         ("job_applications", "custom_cv_generated_at", "DATETIME"),
+        ("achievements", "always_include", "BOOLEAN DEFAULT 0"),
     ]
     inspector = inspect(engine)
     with engine.begin() as conn:
