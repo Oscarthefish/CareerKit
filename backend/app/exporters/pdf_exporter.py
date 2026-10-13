@@ -14,10 +14,10 @@ class CVPDF(FPDF):
         pass
 
     def footer(self):
-        self.set_y(-13)
+        self.set_y(-10)
         self.set_font("Helvetica", "I", 8)
         self.set_text_color(*LIGHT)
-        self.cell(0, 10, f"Page {self.page_no()}", align="C")
+        self.cell(0, 6, f"Page {self.page_no()}", align="C")
 
 
 _UNICODE_REPLACEMENTS = {
@@ -70,9 +70,14 @@ def export(markdown_content: str, output_path: "str | Path") -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
 
     pdf = CVPDF(orientation="P", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=15)
+    # Tightened from 15/14mm - a CV should use every page fully rather than
+    # waste ~2-3mm of blank margin on every single page, which compounds
+    # across a multi-page document into a near-empty trailing page (e.g. a
+    # whole page 4 for nothing but a two-line Community Involvement
+    # section). Still comfortably clear of the footer below.
+    pdf.set_auto_page_break(auto=True, margin=11)
     pdf.add_page()
-    pdf.set_margins(20, 14, 20)
+    pdf.set_margins(20, 12, 20)
 
     lines = markdown_content.split("\n")
     i = 0
@@ -151,11 +156,35 @@ def export(markdown_content: str, output_path: "str | Path") -> Path:
         # ## SECTION HEADING
         if stripped.startswith("## "):
             heading = _clean(stripped[3:]).upper()
-            # Keep the heading with at least the next line of content —
-            # never leave it alone at the bottom of a page.
-            if pdf.will_page_break(20):
+            # Keep the heading with at least the next line of real content -
+            # never leave it alone at the bottom of a page. A flat reserve
+            # here was only ever enough for the heading itself, not for
+            # whatever follows it: a long achievement bullet wraps to
+            # several lines, so the heading would pass this check, get
+            # drawn, and then the bullet itself would trigger the NEXT page
+            # break - leaving the heading orphaned on the page before its
+            # own content. Measure the real height of the first bullet or
+            # paragraph that follows, the same way the "### Role" handler
+            # below already does for its own next line.
+            reserve = 12
+            look = i + 1
+            while look < len(lines) and not lines[look].strip():
+                look += 1
+            if look < len(lines):
+                next_stripped = lines[look].strip()
+                if next_stripped.startswith(("- ", "* ")):
+                    pdf.set_font("Helvetica", "", 9.5)
+                    reserve += pdf.multi_cell(
+                        0, 5, _prep_markdown(next_stripped[2:]), dry_run=True, output="HEIGHT", markdown=True
+                    )
+                elif next_stripped and not next_stripped.startswith(("#", "<!--")):
+                    pdf.set_font("Helvetica", "", 10)
+                    reserve += pdf.multi_cell(
+                        0, 5.5, _prep_markdown(next_stripped), dry_run=True, output="HEIGHT", markdown=True
+                    )
+            if pdf.will_page_break(reserve):
                 pdf.add_page()
-            pdf.ln(3)
+            pdf.ln(2)
             pdf.set_font("Helvetica", "B", 8.5)
             pdf.set_text_color(*BLUE)
             pdf.cell(0, 5, heading, ln=True)
@@ -165,7 +194,7 @@ def export(markdown_content: str, output_path: "str | Path") -> Path:
             y = pdf.get_y()
             pdf.line(20, y, 190, y)
             pdf.set_line_width(0.2)
-            pdf.ln(4)
+            pdf.ln(2.5)
             i += 1
             continue
 
