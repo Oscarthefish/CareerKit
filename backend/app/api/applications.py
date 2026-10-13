@@ -1,5 +1,6 @@
 import json
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
@@ -94,6 +95,7 @@ def _serialize(app: JobApplication) -> dict:
         "tailored_cv": app.tailored_cv,
         "custom_cv": app.custom_cv,
         "custom_cv_fixes_applied": json.loads(app.custom_cv_fixes_applied) if app.custom_cv_fixes_applied else None,
+        "custom_cv_generated_at": app.custom_cv_generated_at.isoformat() if app.custom_cv_generated_at else None,
         "interview_prep": json.loads(app.interview_prep) if app.interview_prep else None,
         "linkedin_angle": app.linkedin_angle,
         "recruiter_message": app.recruiter_message,
@@ -488,6 +490,7 @@ async def generate_custom_cv(app_id: int, db: Session = Depends(get_db)):
 
     app.custom_cv = custom_cv
     app.custom_cv_fixes_applied = json.dumps([selection_summary])
+    app.custom_cv_generated_at = datetime.utcnow()
     db.commit()
 
     ats_after = run_ats_check(custom_cv)
@@ -529,6 +532,7 @@ async def generate_custom_cv(app_id: int, db: Session = Depends(get_db)):
     return {
         "custom_cv": custom_cv,
         "selection_summary": selection_summary,
+        "generated_at": app.custom_cv_generated_at.isoformat(),
         "before": before,
         "after": after,
         "ats_check": ats_after,

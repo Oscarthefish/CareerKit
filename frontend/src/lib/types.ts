@@ -227,6 +227,7 @@ export interface JobApplication {
   tailored_cv: string | null
   custom_cv: string | null
   custom_cv_fixes_applied: string[] | null
+  custom_cv_generated_at: string | null
   interview_prep: InterviewPrep | null
   linkedin_angle: string | null
   recruiter_message: string | null
@@ -383,6 +384,7 @@ export interface CustomCvScores {
 export interface CustomCvResult {
   custom_cv: string
   selection_summary: string
+  generated_at?: string | null
   before: CustomCvScores
   after: CustomCvScores
   ats_check: AtsCheckResult
