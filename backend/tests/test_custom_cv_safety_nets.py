@@ -1,6 +1,7 @@
 import unittest
 
 from app.api.cv import (
+    _ensure_two_paragraph_profile,
     _force_additional_background,
     _force_certifications_and_training,
     _force_selected_technologies,
@@ -56,6 +57,67 @@ class StripUnsupportedClaimsByLineTests(unittest.TestCase):
             content, self._profile(), ["Microsoft Sentinel"], "CORE CAPABILITIES"
         )
         self.assertEqual(result, content)
+
+
+class EnsureTwoParagraphProfileTests(unittest.TestCase):
+    def test_real_xero_regression_splits_a_run_on_block_into_two_paragraphs(self):
+        # Verbatim shape of the real generation this safety net exists to
+        # catch: nine sentences written as one continuous block with no
+        # paragraph break at all.
+        content = (
+            "## PROFESSIONAL PROFILE\n"
+            "As a highly experienced Security Operations professional with over a decade of experience in "
+            "network and cyber security, I have developed a strong background in managing security operations "
+            "across enterprise environments and international infrastructure projects. With a proven track "
+            "record of delivering effective security solutions, I have worked closely with globally distributed "
+            "teams to triage, contain and resolve security incidents. I am excited to bring my skills and "
+            "experience to a new challenge and contribute to a team that is dedicated to delivering exceptional "
+            "security solutions. In my previous roles, I have worked in various capacities, including as a "
+            "Cyber Security Analyst, Network Security Analyst, and Desktop Support Supervisor. I have a strong "
+            "passion for OSINT and threat research, and I have completed extensive training in various areas, "
+            "including incident response, threat analysis, and security operations. I am a strong believer in "
+            "the importance of continuous learning and professional development, and I regularly attend "
+            "industry events and conferences to stay up-to-date with the latest developments in the field.\n"
+            "## CORE CAPABILITIES\n"
+        )
+        result = _ensure_two_paragraph_profile(content)
+        original_body = content.split("## PROFESSIONAL PROFILE\n")[1].split("## CORE CAPABILITIES")[0]
+        result_body = result.split("## PROFESSIONAL PROFILE\n")[1].split("## CORE CAPABILITIES")[0]
+        paragraphs = [p for p in result_body.strip().split("\n\n") if p.strip()]
+        self.assertEqual(len(paragraphs), 2)
+        # No word lost in the reflow - same sentence content, just regrouped.
+        self.assertEqual(sorted(original_body.split()), sorted(result_body.split()))
+
+    def test_leaves_an_already_well_formed_two_paragraph_profile_unchanged_in_substance(self):
+        content = (
+            "## PROFESSIONAL PROFILE\n"
+            "First paragraph about identity and seniority.\n\n"
+            "Second paragraph about working style and interests.\n"
+            "## CORE CAPABILITIES\n"
+        )
+        result = _ensure_two_paragraph_profile(content)
+        self.assertIn("First paragraph about identity and seniority.", result)
+        self.assertIn("Second paragraph about working style and interests.", result)
+
+    def test_single_sentence_profile_is_left_as_one_paragraph(self):
+        content = "## PROFESSIONAL PROFILE\nOne short sentence only.\n## CORE CAPABILITIES\n"
+        self.assertEqual(_ensure_two_paragraph_profile(content), content)
+
+    def test_no_change_when_section_missing(self):
+        content = "## CORE CAPABILITIES\n**Label:** content.\n"
+        self.assertEqual(_ensure_two_paragraph_profile(content), content)
+
+    def test_three_paragraphs_collapse_to_two(self):
+        content = (
+            "## PROFESSIONAL PROFILE\n"
+            "Sentence one is here. Sentence two follows along.\n\n"
+            "Sentence three adds detail. Sentence four continues it.\n\n"
+            "Sentence five wraps it up. Sentence six closes things out.\n"
+            "## CORE CAPABILITIES\n"
+        )
+        result = _ensure_two_paragraph_profile(content)
+        section = result.split("## CORE CAPABILITIES")[0].replace("## PROFESSIONAL PROFILE", "").strip()
+        self.assertEqual(len(section.split("\n\n")), 2)
 
 
 class NormalizeCoreCapabilitiesTests(unittest.TestCase):

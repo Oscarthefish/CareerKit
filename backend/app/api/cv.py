@@ -709,6 +709,52 @@ def _strip_unsupported_profile_claims(content: str, profile: dict, jd_terminolog
     return content[:section_match.start(2)] + new_body + "\n" + content[section_match.end(2):]
 
 
+def _ensure_two_paragraph_profile(content: str) -> str:
+    """Safety net: custom_cv_generate.md asks for PROFESSIONAL PROFILE as two
+    short paragraphs (identity/seniority/strongest matches, then working
+    style/collaboration/personal interest) - but a local model has been
+    observed writing the whole thing as one continuous block with no
+    paragraph break at all, or occasionally three or more. Never drops or
+    rewrites a word - reflows whatever sentences are there (across however
+    many paragraphs the model used) into exactly two, split at the sentence
+    boundary closest to the halfway point by word count, so the section
+    always renders as two paragraphs regardless of how the model structured
+    it. Runs after _strip_unsupported_profile_claims above, which already
+    flattens the section to one block when it removes a sentence - this
+    reflows the result (unsupported-claim-free either way) into shape."""
+    section_match = re.search(r"(^## PROFESSIONAL PROFILE\s*\n)(.*?)(?=\n## |\Z)", content, re.MULTILINE | re.DOTALL)
+    if not section_match:
+        return content
+    section_body = section_match.group(2)
+
+    flat = re.sub(r"\n+", " ", section_body).strip()
+    if not flat:
+        return content
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+(?=[A-Z])", flat) if s.strip()]
+    if len(sentences) < 2:
+        return content  # a single sentence stays a single paragraph
+
+    total_words = len(flat.split())
+    half = total_words / 2
+    cum = 0
+    split_idx = None
+    for i, s in enumerate(sentences[:-1]):
+        cum += len(s.split())
+        if cum >= half:
+            split_idx = i + 1
+            break
+    if split_idx is None:
+        split_idx = len(sentences) - 1  # fallback: keep at least the last sentence in paragraph two
+
+    first = " ".join(sentences[:split_idx]).strip()
+    second = " ".join(sentences[split_idx:]).strip()
+    if not first or not second:
+        return content
+
+    new_body = first + "\n\n" + second + "\n"
+    return content[:section_match.start(2)] + new_body + content[section_match.end(2):]
+
+
 def _strip_unsupported_claims_by_line(
     content: str, profile: dict, jd_terminology: list[str], section_heading: str
 ) -> str:
@@ -1035,6 +1081,7 @@ def apply_custom_cv_safety_nets(content: str, profile: dict, jd_terminology: lis
     merely varying by a flag."""
     content = re.sub(r"\n[ \t]*-[ \t]*\n", "\n", content)
     content = _strip_unsupported_profile_claims(content, profile, jd_terminology or [])
+    content = _ensure_two_paragraph_profile(content)
     content = _normalize_core_capabilities(content, profile.get("platforms_and_tools_display", []))
     content = _strip_unsupported_claims_by_line(content, profile, jd_terminology or [], "CORE CAPABILITIES")
     content = _strip_trailing_line_commas(content)
