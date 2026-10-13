@@ -12,6 +12,8 @@ this module). Same "classify with AI, decide in code" split used throughout
 this package.
 """
 
+import re
+
 # Evidence-strength multiplier, reusing the *stored* "coverage" field from a
 # job_match_result's requirement_coverage/hard_skills tables (STRONG_EVIDENCE
 # / PARTIAL_EVIDENCE / NO_EVIDENCE / UNKNOWN) rather than needing the raw
@@ -186,11 +188,97 @@ def select_projects(projects: list[dict], source_scores: dict[str, float]) -> li
 MIN_TOOL_CATEGORY_LINES = 3
 
 
-def select_platforms_and_tools(tools_lines: list[str], source_scores: dict[str, float]) -> list[str]:
+_CATEGORY_STOPWORDS = {"platform", "platforms", "tool", "tools", "or", "and", "the", "a", "an", "of", "for", "to", "in", "on", "with", "log"}
+
+# Words too generic to safely credit a fuzzy name match on their own - e.g.
+# "Splunk Enterprise Security" and "Mimecast Enterprise Security" sharing
+# only "enterprise"/"security" says nothing about whether either is
+# actually the one a citation means. Longer, but still excluded, because
+# in practice they are shared marketing boilerplate across many unrelated
+# product names rather than anything distinctive.
+_FUZZY_NAME_STOPWORDS = {
+    "security", "enterprise", "management", "manager", "platform", "platforms",
+    "systems", "solutions", "networks", "network", "services", "service",
+    "protection", "professional", "pro",
+}
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-zA-Z0-9]+", (text or "").lower()) if w and w not in _CATEGORY_STOPWORDS}
+
+
+def _fuzzy_name_cited(name: str, source_scores: dict[str, float]) -> bool:
+    """Fallback for score_for_name's exact-substring check, scoped to tools:
+    a Job Match citation sometimes names a product with its vendor prefix
+    dropped (e.g. citing "Cortex XDR" for the candidate's actual skill
+    record "Palo Alto Cortex XDR") - the full name is then never a literal
+    substring of the source text, so score_for_name never credits it even
+    though the product is unmistakably the same one. Falls back to a shared
+    distinctive word (excluding generic marketing terms - see
+    _FUZZY_NAME_STOPWORDS) between the product's own name and any cited
+    source text."""
+    name_words = {w for w in _words(name) if len(w) > 4 and w not in _FUZZY_NAME_STOPWORDS}
+    if not name_words:
+        return False
+    return any(any(w in source for w in name_words) for source in source_scores)
+
+
+def _category_cited(tool_category: str, requirement_coverage: list[dict]) -> bool:
+    """A second, independent fallback for tools specifically: the product's
+    own fine-grained tool_category (e.g. "SIEM", "EDR / XDR") is itself a
+    strong, deterministic relevance signal that a Job Match citation can
+    miss entirely - e.g. a requirement named "SIEM or Log Platform" with
+    STRONG_EVIDENCE can cite only the generic source string "SIEM" rather
+    than the specific product "Splunk Enterprise Security", so neither
+    score_for_name nor _fuzzy_name_cited above ever credits Splunk even
+    though this requirement is unambiguously about exactly that product's
+    category. Credits the category if any STRONG/PARTIAL evidence
+    requirement's own name shares a significant word with it."""
+    cat_words = _words(tool_category)
+    if not cat_words:
+        return False
+    for row in requirement_coverage or []:
+        if row.get("coverage") not in ("STRONG_EVIDENCE", "PARTIAL_EVIDENCE"):
+            continue
+        if cat_words & _words(row.get("name", "")):
+            return True
+    return False
+
+
+def select_platforms_and_tools(
+    tools_lines: list[str],
+    source_scores: dict[str, float],
+    tool_skills: list[dict] | None = None,
+    requirement_coverage: list[dict] | None = None,
+) -> list[str]:
     """platforms_and_tools_display lines look like "Category: Product A,
     Product B" - filter each line's product list to cited products only,
     dropping the whole line if nothing in it is cited for this job. Falls
-    back to the full list if too few categories survive filtering."""
+    back to the full list if too few categories survive filtering.
+
+    tool_skills and requirement_coverage are optional: when given, a
+    product that fails the exact score_for_name check still survives if
+    _fuzzy_name_cited or _category_cited (see above) credits it - both
+    guard against a real, clearly-relevant flagship tool (a candidate's
+    primary SIEM, their EDR/XDR platform) silently disappearing from a
+    Custom CV just because the Job Match's citation text used a shorter or
+    more generic phrase than the product's full name."""
+    category_by_name = {
+        (s.get("name") or "").strip().lower(): s.get("tool_category")
+        for s in (tool_skills or [])
+        if s.get("name")
+    }
+
+    def _is_cited(product: str) -> bool:
+        if score_for_name(product, source_scores) > 0:
+            return True
+        if _fuzzy_name_cited(product, source_scores):
+            return True
+        category = category_by_name.get(product.strip().lower())
+        if category and _category_cited(category, requirement_coverage or []):
+            return True
+        return False
+
     filtered = []
     for line in tools_lines:
         if ":" not in line:
@@ -198,7 +286,7 @@ def select_platforms_and_tools(tools_lines: list[str], source_scores: dict[str, 
             continue
         category, _, rest = line.partition(":")
         products = [p.strip() for p in rest.split(",") if p.strip()]
-        cited = [p for p in products if score_for_name(p, source_scores) > 0]
+        cited = [p for p in products if _is_cited(p)]
         if cited:
             filtered.append(f"{category.strip()}: {', '.join(cited)}")
     if len(filtered) >= min(MIN_TOOL_CATEGORY_LINES, len(tools_lines)):
@@ -220,7 +308,9 @@ def select_evidence_for_cv(profile: dict, requirement_coverage: list[dict]) -> d
     selected["achievements"] = select_achievements(profile.get("achievements", []), scores)
     selected["work_experience"] = select_responsibilities(profile.get("work_experience", []), scores)
     selected["projects"] = select_projects(profile.get("projects", []), scores)
+    tool_skills = [s for s in profile.get("skills", []) if s.get("category") == "tool"]
     selected["platforms_and_tools_display"] = select_platforms_and_tools(
-        profile.get("platforms_and_tools_display", []), scores
+        profile.get("platforms_and_tools_display", []), scores,
+        tool_skills=tool_skills, requirement_coverage=requirement_coverage,
     )
     return selected

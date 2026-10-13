@@ -35,8 +35,6 @@ def _is_education(title: str) -> bool:
 # somewhere, just not pre-sorted into one of the named groups.
 _TOOL_FUNCTIONAL_GROUPS: dict[str, str] = {
     "siem": "SIEM & Investigation",
-    "case management": "SIEM & Investigation",
-    "security operations platforms": "SIEM & Investigation",
     "edr / xdr": "Endpoint & Detection",
     "endpoint protection": "Endpoint & Detection",
     "deception technology": "Endpoint & Detection",
@@ -48,6 +46,14 @@ _TOOL_FUNCTIONAL_GROUPS: dict[str, str] = {
     "vulnerability scanning": "Threat Intelligence & Supporting Tools",
     "email security": "Threat Intelligence & Supporting Tools",
     "password management": "Identity & Access",
+    # Case management/ticketing tools (e.g. Jira) and SOC aggregation
+    # platforms (e.g. Cisco SecureX) are genuinely different from a SIEM -
+    # a real candidate flagged Jira showing up under "SIEM & Investigation"
+    # as misleading, since Jira is used for ticketing and SLAs, not log
+    # analysis or investigation itself. Kept as their own group rather than
+    # folded into SIEM & Investigation.
+    "case management": "Case Management & Orchestration",
+    "security operations platforms": "Case Management & Orchestration",
 }
 _TOOL_FUNCTIONAL_GROUP_ORDER = [
     "SIEM & Investigation",
@@ -55,6 +61,7 @@ _TOOL_FUNCTIONAL_GROUP_ORDER = [
     "Network, DNS & Web",
     "Threat Intelligence & Supporting Tools",
     "Identity & Access",
+    "Case Management & Orchestration",
     "Other Tools",
 ]
 
@@ -348,6 +355,7 @@ def build_profile_summary(db: Session, mode: str = DEFAULT_MODE) -> dict:
                 "name": s.name,
                 "aliases": json.loads(s.aliases or "[]"),
                 "category": s.category,
+                "tool_category": s.tool_category,
                 "proficiency": s.proficiency,
                 "years_experience": s.years_experience,
                 "last_used": s.last_used,
