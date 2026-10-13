@@ -187,6 +187,64 @@ class NormalizeCoreCapabilitiesTests(unittest.TestCase):
         content = "## PROFESSIONAL PROFILE\nSome profile text.\n"
         self.assertEqual(_normalize_core_capabilities(content, self.TOOLS_LINES), content)
 
+    def test_real_xero_regression_handles_colonless_h2_subheadings_with_prose_below(self):
+        # Verbatim shape of a SECOND real generation this safety net exists
+        # to catch: each group as its own "## Label" sub-heading (no colon
+        # at all, same heading level as every real section heading) with
+        # the content as a plain prose paragraph on the line below rather
+        # than inline. Without a section-boundary fix, the naive "stop at
+        # the next line starting with ##" lookahead stops at the model's
+        # OWN first fake sub-heading, sees an empty section, and leaves the
+        # whole thing untouched.
+        content = (
+            "## CORE CAPABILITIES\n"
+            "## Incident Response & Investigation\n"
+            "I have extensive experience in incident response and investigation, having "
+            "investigated and managed security incidents across SIEM, EDR, endpoint, network, "
+            "email and identity platforms.\n"
+            "\n"
+            "## Detection & Threat Analysis\n"
+            "I have a strong background in detection and threat analysis, having actively "
+            "searched for IOCs and suspicious behaviour.\n"
+            "## SELECTED TECHNOLOGIES\n"
+            "SIEM & Investigation: Jira\n"
+        )
+        result = _normalize_core_capabilities(content, self.TOOLS_LINES)
+        core_section = result.split("## SELECTED TECHNOLOGIES")[0]
+
+        self.assertNotIn("## Incident Response", core_section)
+        self.assertNotIn("## Detection", core_section)
+        self.assertIn("**Incident Response & Investigation:**", core_section)
+        self.assertIn(
+            "I have extensive experience in incident response and investigation, having "
+            "investigated and managed security incidents across SIEM, EDR, endpoint, network, "
+            "email and identity platforms.",
+            core_section,
+        )
+        self.assertIn("**Detection & Threat Analysis:**", core_section)
+        # The verbatim copy below must survive completely untouched - proof
+        # the section boundary now stops at the real heading, not the fake one.
+        self.assertIn("SIEM & Investigation: Jira", result.split("## SELECTED TECHNOLOGIES")[1])
+
+    def test_two_prose_sentences_in_one_group_join_with_a_space_not_a_comma(self):
+        content = (
+            "## CORE CAPABILITIES\n"
+            "## Tooling & Automation\n"
+            "Used Splunk and Cortex XDR for daily triage work.\n"
+            "Also automated handover summaries into Mattermost.\n"
+            "## SELECTED TECHNOLOGIES\n"
+        )
+        result = _normalize_core_capabilities(content, [])
+        core_section = result.split("## SELECTED TECHNOLOGIES")[0]
+        # Two full sentences, each already ending in its own full stop, must
+        # not end up with a stray comma landing right after one.
+        self.assertIn(
+            "**Tooling & Automation:** Used Splunk and Cortex XDR for daily triage work. "
+            "Also automated handover summaries into Mattermost.",
+            core_section,
+        )
+        self.assertNotIn(".,", core_section)
+
 
 class ForceSelectedTechnologiesTests(unittest.TestCase):
     def test_replaces_a_truncated_section_body(self):
