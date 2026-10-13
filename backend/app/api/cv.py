@@ -809,25 +809,48 @@ def _non_dataless_roles(work_experience: list[dict]) -> list[dict]:
     ]
 
 
+_REAL_CUSTOM_CV_HEADINGS_AFTER_CORE_CAPABILITIES = (
+    "SELECTED TECHNOLOGIES", "PROFESSIONAL EXPERIENCE", "SELECTED ACHIEVEMENTS",
+    "PROJECTS", "CERTIFICATIONS & TRAINING", "ADDITIONAL BACKGROUND", "COMMUNITY INVOLVEMENT",
+)
+
+
 def _normalize_core_capabilities(content: str, tools_lines: list[str]) -> str:
     """Safety net: custom_cv_generate.md asks for CORE CAPABILITIES as 4-6
     one-line "**Label:** sentence" groups under the single "## CORE
-    CAPABILITIES" heading - but a local model has been observed instead
-    giving each group its own "### Label:" sub-heading, followed by several
-    separate bullet lines rather than one sentence, with some of those
-    bullets splicing in a literal, correctly-formatted SELECTED TECHNOLOGIES
-    line verbatim (e.g. "SIEM & Investigation: Jira", sometimes run together
-    with real capability content in the same comma-separated bullet, e.g.
-    "Incident Response, Maltego, SIEM & Investigation: Jira, Endpoint &
-    Detection: Cisco AMP") rather than real prose - that content already has
-    its own correctly-labelled home under SELECTED TECHNOLOGIES and has no
-    business being restated here. Strips any such leaked line as a literal
-    substring wherever it appears, demotes any "###" sub-heading back to the
-    required bold-inline form, and folds whatever real content remains under
-    each label into that label's own single comma-joined line - dropping a
-    group entirely if nothing but a tech-list leak was left under it, rather
-    than keep an empty, padding-only group."""
-    section_match = re.search(r"(^## CORE CAPABILITIES\s*\n)(.*?)(?=\n## |\Z)", content, re.MULTILINE | re.DOTALL)
+    CAPABILITIES" heading - but a local model has been observed restructuring
+    it in several different ways on different regenerations instead:
+    - giving each group its own "### Label:" sub-heading followed by several
+      separate bullet lines rather than one sentence, with some of those
+      bullets splicing in a literal, correctly-formatted SELECTED
+      TECHNOLOGIES line verbatim (e.g. "SIEM & Investigation: Jira",
+      sometimes run together with real content in the same comma-separated
+      bullet) rather than real prose - that content already has its own
+      correctly-labelled home under SELECTED TECHNOLOGIES and has no
+      business being restated here;
+    - giving each group its own "## Label" sub-heading (no colon at all)
+      with the real content as a plain prose paragraph on the following
+      line instead of inline.
+    The second shape is also why the section's own end boundary can't just
+    be "the next line starting with ##" - that would stop at the model's
+    own first fake "## Label" sub-heading instead of the real next section,
+    so a model-written "##" sub-heading would make this function see an
+    empty section and leave the whole mess untouched. Anchor the end on the
+    specific, known real heading names that always follow CORE CAPABILITIES
+    in this format instead.
+
+    Strips any leaked SELECTED TECHNOLOGIES line as a literal substring
+    wherever it appears, demotes any "##"/"###" sub-heading (colon or not)
+    back to the required bold-inline form, and folds whatever real content
+    remains under each label into that label's own single comma-joined
+    line - dropping a group entirely if nothing but a tech-list leak was
+    left under it, rather than keep an empty, padding-only group."""
+    next_heading_lookahead = r"(?=\n## (?:" + "|".join(
+        re.escape(h) for h in _REAL_CUSTOM_CV_HEADINGS_AFTER_CORE_CAPABILITIES
+    ) + r")\b|\Z)"
+    section_match = re.search(
+        r"(^## CORE CAPABILITIES\s*\n)(.*?)" + next_heading_lookahead, content, re.MULTILINE | re.DOTALL
+    )
     if not section_match:
         return content
     section_body = section_match.group(2)
@@ -838,31 +861,50 @@ def _normalize_core_capabilities(content: str, tools_lines: list[str]) -> str:
     # runs of now-empty ", , ," separators and a trailing comma at end of
     # line. A label's own trailing colon (e.g. "### Global SOC Operations: "
     # with nothing real left after it) is deliberately left alone - the
-    # label_pattern matching below needs that colon to recognise the line as
-    # a label at all; an empty "rest" after it is handled there instead.
+    # label matching below needs that colon to recognise the line as a
+    # labelled group with inline content at all; an empty "rest" after it
+    # is handled there instead.
     section_body = re.sub(r"[ \t]*,[ \t,]*", ", ", section_body)
     section_body = re.sub(r",\s*$", "", section_body, flags=re.MULTILINE)
     section_body = re.sub(r":\s*,\s*", ": ", section_body)
 
-    label_pattern = re.compile(r"^(?:#{2,3}\s*|\*\*)(.+?):(?:\*\*)?\s*(.*)$")
+    label_with_colon = re.compile(r"^(?:#{2,3}\s*|\*\*)(.+?):(?:\*\*)?\s*(.*)$")
+    label_without_colon = re.compile(r"^#{2,3}\s*(.+?)\s*$")
     groups: list[list] = []
     for raw_line in section_body.split("\n"):
         line = raw_line.strip()
         if not line:
             continue
-        m = label_pattern.match(line) if line.startswith(("#", "*")) else None
+        m = label_with_colon.match(line) if line.startswith(("#", "*")) else None
         if m:
             label, rest = m.group(1).strip(), m.group(2).strip()
             groups.append([label, [rest] if rest else []])
             continue
-        bullet = line.lstrip("-").strip()
-        if bullet and groups:
-            groups[-1][1].append(bullet)
+        m2 = label_without_colon.match(line) if line.startswith("#") else None
+        if m2:
+            groups.append([m2.group(1).strip(), []])
+            continue
+        content_line = line.lstrip("-").strip()
+        if content_line and groups:
+            groups[-1][1].append(content_line)
 
     if not groups:
         return content
 
-    new_lines = [f"**{label}:** " + ", ".join(parts) for label, parts in groups if parts]
+    def _join_parts(parts: list[str]) -> str:
+        # A bullet-fragment group (e.g. "Incident Response", "Maltego") reads
+        # as a list and needs a comma between parts; a prose-paragraph group
+        # (e.g. a full sentence already ending in its own full stop) needs a
+        # plain space instead, or a stray comma lands right after the full
+        # stop. Decided per join by whether the part just added already
+        # ended a sentence, so one group can even mix both shapes.
+        out = parts[0]
+        for part in parts[1:]:
+            sep = " " if out.rstrip().endswith((".", "!", "?")) else ", "
+            out += sep + part
+        return out
+
+    new_lines = [f"**{label}:** " + _join_parts(parts) for label, parts in groups if parts]
     if not new_lines:
         return content
     new_body = "\n".join(new_lines) + "\n"
