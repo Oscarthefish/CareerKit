@@ -1,4 +1,5 @@
 import json
+import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -774,6 +775,32 @@ async def generate_tailored_cv(app_id: int, db: Session = Depends(get_db)):
     return {"tailored_cv": content}
 
 
+_EXPORT_SECTION_LABELS = {
+    "cover-letter": "Cover Letter",
+    "cv-notes": "CV Notes",
+    "tailored-cv": "Tailored CV",
+    "custom-cv": "Custom CV",
+    "linkedin": "LinkedIn Angle",
+    "scorecard": "Scorecard",
+}
+
+_UNSAFE_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|]')
+
+
+def _export_download_name(app: JobApplication, section: str) -> str:
+    """The downloaded file's own name (distinct from the cache path on disk
+    below, which only needs to be a stable, collision-free key) - "custom-
+    cv.pdf" told the candidate nothing about which application it was for
+    once saved alongside several others. Builds "Company - Role -
+    Section.ext" from the application's own company/role where there's
+    something to put there, falling back to the section name alone for an
+    application with neither set."""
+    label = _EXPORT_SECTION_LABELS.get(section, section.replace("-", " ").title())
+    parts = [_UNSAFE_FILENAME_CHARS.sub("", (app.company or "").strip()),
+             _UNSAFE_FILENAME_CHARS.sub("", (app.role or "").strip()), label]
+    return " - ".join(p for p in parts if p)
+
+
 @router.get("/{app_id}/export/{fmt}")
 def export_application(app_id: int, fmt: str, section: str = "cover-letter", db: Session = Depends(get_db)):
     app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
@@ -795,18 +822,19 @@ def export_application(app_id: int, fmt: str, section: str = "cover-letter", db:
     folder = Path(app.session_folder) / "exports"
     folder.mkdir(parents=True, exist_ok=True)
     safe_section = section.replace("/", "-")
+    download_name = _export_download_name(app, section)
 
     if fmt == "md":
         path = markdown_exporter.export(content, folder / f"{safe_section}.md")
-        return FileResponse(str(path), filename=f"{safe_section}.md", media_type="text/markdown")
+        return FileResponse(str(path), filename=f"{download_name}.md", media_type="text/markdown")
     elif fmt == "docx":
         path = docx_exporter.export(content, folder / f"{safe_section}.docx")
         return FileResponse(
-            str(path), filename=f"{safe_section}.docx",
+            str(path), filename=f"{download_name}.docx",
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
     elif fmt == "pdf":
         path = pdf_exporter.export(content, folder / f"{safe_section}.pdf")
-        return FileResponse(str(path), filename=f"{safe_section}.pdf", media_type="application/pdf")
+        return FileResponse(str(path), filename=f"{download_name}.pdf", media_type="application/pdf")
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported format: {fmt}")
