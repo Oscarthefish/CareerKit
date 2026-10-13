@@ -24,6 +24,7 @@ class JobApplication(Base):
     tailored_cv = Column(Text)
     custom_cv = Column(Text)                  # markdown — generated from selected Job Match fixes only
     custom_cv_fixes_applied = Column(Text)    # JSON — requirement names of the fixes actually applied
+    custom_cv_generated_at = Column(DateTime) # when the AI last (re)generated it - not touched by a manual edit
     interview_prep = Column(Text)
     linkedin_angle = Column(Text)
     recruiter_message = Column(Text)

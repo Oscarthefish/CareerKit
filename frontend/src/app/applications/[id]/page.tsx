@@ -623,7 +623,11 @@ function CustomCvPanel({
 }: { app: JobApplication; appId: number; refresh: () => void }) {
   const [cvResult, setCvResult] = useState<CustomCvResult | null>(
     app.custom_cv
-      ? { custom_cv: app.custom_cv, selection_summary: app.custom_cv_fixes_applied?.[0] || '' } as CustomCvResult
+      ? {
+          custom_cv: app.custom_cv,
+          selection_summary: app.custom_cv_fixes_applied?.[0] || '',
+          generated_at: app.custom_cv_generated_at,
+        } as CustomCvResult
       : null
   )
   const [editing, setEditing] = useState(false)
@@ -695,7 +699,14 @@ function CustomCvPanel({
             </>
           )}
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-gray-400">{cvResult.selection_summary}</p>
+            <div>
+              <p className="text-xs text-gray-400">{cvResult.selection_summary}</p>
+              {cvResult.generated_at && (
+                <p className="text-xs text-gray-400">
+                  Generated {new Date(cvResult.generated_at).toLocaleString('en-NZ', { dateStyle: 'medium', timeStyle: 'short' })}
+                </p>
+              )}
+            </div>
             <div className="flex gap-2">
               {!editing && <button onClick={startEditing} className="btn-ghost btn-sm">Edit</button>}
               <a href={exportApplication(appId, 'md', 'custom-cv')} download className="btn-ghost btn-sm">MD</a>
