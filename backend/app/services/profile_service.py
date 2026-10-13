@@ -419,6 +419,7 @@ def build_profile_summary(db: Session, mode: str = DEFAULT_MODE) -> dict:
                 "employer": a.employer,
                 "date_range": a.date_range,
                 "bullet_strong": a.bullet_strong,
+                "always_include": bool(a.always_include),
             }
             for a in achievements
         ],

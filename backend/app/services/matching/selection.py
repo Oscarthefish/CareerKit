@@ -111,8 +111,17 @@ def select_skills(skills: list[dict], source_scores: dict[str, float]) -> list[d
 
 
 def select_achievements(achievements: list[dict], source_scores: dict[str, float]) -> list[dict]:
-    """Rank achievements by relevance to this job, then backfill all the way
-    toward MAX_ACHIEVEMENTS with whatever's left, prioritising any
+    """An achievement the candidate has explicitly marked "always_include"
+    (see the Career Profile achievements editor) always makes the cut,
+    regardless of this job's citation pass or MAX_ACHIEVEMENTS - that's the
+    whole point of the flag: no automatic ranking heuristic can reliably
+    guess which one specific achievement a candidate's own recruiters have
+    told them to never drop. Marking MORE of them than MAX_ACHIEVEMENTS is
+    honoured too ("select all if appropriate for the role" is a legitimate
+    candidate choice, not a bug to guard against).
+
+    Everything else is ranked by relevance to this job, then backfilled
+    toward whatever's left of MAX_ACHIEVEMENTS, prioritising any
     achievement with a real "measurable_outcome" - a quantified result
     (e.g. "increased endpoint protection coverage from ~60% to 98%") is
     strong, durable CV material a recruiter looks for regardless of whether
@@ -124,27 +133,32 @@ def select_achievements(achievements: list[dict], source_scores: dict[str, float
     was dropped outright, MAX_ACHIEVEMENTS notwithstanding. That silently
     dropped a candidate's strongest quantified achievements purely on
     citation luck - a real one was reported missing from a real Custom CV
-    despite having a confirmed, quantified outcome on record."""
+    despite having a confirmed, quantified outcome on record, which is
+    exactly the gap always_include exists to close for good."""
+    always_included = [a for a in achievements if a.get("always_include")]
+    rest = [a for a in achievements if not a.get("always_include")]
+    budget = max(MAX_ACHIEVEMENTS - len(always_included), 0)
+
     scored = sorted(
-        enumerate(achievements),
+        enumerate(rest),
         key=lambda pair: score_for_name(pair[1].get("title", ""), source_scores),
         reverse=True,
     )
     cited = [a for i, a in scored if score_for_name(a.get("title", ""), source_scores) > 0]
-    selected = cited[:MAX_ACHIEVEMENTS]
+    selected = cited[:budget]
 
-    if len(selected) < MAX_ACHIEVEMENTS:
+    if len(selected) < budget:
         selected_ids = {id(a) for a in selected}
         remaining = [a for i, a in scored if id(a) not in selected_ids]
         # Stable sort: measurable-outcome achievements first, each group
         # keeping its original relative (citation-ranked, then input) order.
         remaining.sort(key=lambda a: 0 if a.get("measurable_outcome") else 1)
         for a in remaining:
-            if len(selected) >= MAX_ACHIEVEMENTS:
+            if len(selected) >= budget:
                 break
             selected.append(a)
             selected_ids.add(id(a))
-    return selected
+    return always_included + selected
 
 
 def select_responsibilities(work_experience: list[dict], source_scores: dict[str, float]) -> list[dict]:

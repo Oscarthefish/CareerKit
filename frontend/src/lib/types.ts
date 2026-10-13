@@ -105,6 +105,7 @@ export interface Achievement {
   bullet_ats: string | null
   source: string | null
   notes: string | null
+  always_include: boolean
 }
 
 export interface Project {

@@ -1,6 +1,7 @@
 import unittest
 
 from app.services.matching.selection import (
+    MAX_ACHIEVEMENTS,
     relevance_scores,
     score_for_name,
     select_achievements,
@@ -133,6 +134,53 @@ class SelectAchievementsTests(unittest.TestCase):
         result = select_achievements(achievements, scores)
         self.assertEqual(len(result), 8)
         self.assertNotIn(quantified, result)
+
+    def test_real_regression_always_include_guarantees_a_specific_achievement_survives(self):
+        # The actual real-world case reported: 6 cited, 5 other uncited
+        # achievements (several with their own measurable_outcome) all
+        # competing for the 2 remaining backfill slots, with database order
+        # happening to favour others ahead of this specific one. Flagging
+        # it always_include must guarantee it regardless of that contest.
+        cited = [{"title": f"Cited {i}"} for i in range(6)]
+        competitors = [
+            {"title": f"Competing quantified achievement {i}", "measurable_outcome": f"{i}0% improvement"}
+            for i in range(4)
+        ]
+        target = {
+            "title": "Increased endpoint protection coverage from ~60% to 98%",
+            "measurable_outcome": "Endpoint protection coverage increased from ~60% to 98%",
+            "always_include": True,
+        }
+        achievements = cited + competitors + [target]
+        scores = {f"cited {i}": 1.0 for i in range(6)}
+        result = select_achievements(achievements, scores)
+        self.assertIn(target, result)
+
+    def test_always_include_still_counts_toward_the_overall_max_when_room_allows(self):
+        # One flagged achievement plus plenty of others: the flagged one is
+        # guaranteed, but the total still caps at MAX_ACHIEVEMENTS overall
+        # (it consumes one of the 8 slots) rather than adding on top of a
+        # full 8 from the rest - CV length stays sane for the common case
+        # of flagging just one or two signature achievements. Flagging MORE
+        # than MAX_ACHIEVEMENTS is the deliberate exception - see
+        # test_can_select_all_achievements_by_flagging_more_than_max below.
+        always = {"title": "Signature achievement", "always_include": True}
+        others = [{"title": f"Other {i}"} for i in range(10)]
+        result = select_achievements([always] + others, {})
+        self.assertIn(always, result)
+        self.assertEqual(len(result), MAX_ACHIEVEMENTS)
+
+    def test_can_select_all_achievements_by_flagging_more_than_max(self):
+        achievements = [{"title": f"Achievement {i}", "always_include": True} for i in range(12)]
+        result = select_achievements(achievements, {})
+        self.assertEqual(len(result), 12)
+
+    def test_always_include_achievements_lead_the_list_in_original_order(self):
+        a = {"title": "A", "always_include": True}
+        b = {"title": "B", "always_include": True}
+        cited = {"title": "Cited", }
+        result = select_achievements([cited, a, b], {"cited": 1.0})
+        self.assertEqual([x["title"] for x in result[:2]], ["A", "B"])
 
 
 class SelectResponsibilitiesTests(unittest.TestCase):
