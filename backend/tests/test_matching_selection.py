@@ -153,24 +153,81 @@ class SelectPlatformsAndToolsTests(unittest.TestCase):
         result = select_platforms_and_tools(lines, {"palo alto cortex xdr": 3.0})
         self.assertEqual(result, ["EDR / XDR: Palo Alto Cortex XDR"])
 
+    # Distinct, non-overlapping fake brand names rather than "Product N" -
+    # the shared word "product" would otherwise make every one of them look
+    # fuzzy-cited by _fuzzy_name_cited (see SelectPlatformsAndToolsTests
+    # below for that behaviour's own dedicated tests), which isn't what
+    # these floor/fallback tests are about.
+    _BRANDS = ["Zendrix", "Korvalon", "Fenhollow", "Trabium", "Quorvex", "Nalderin", "Brexwell"]
+
     def test_a_moderate_cut_leaving_at_least_the_floor_is_respected(self):
-        lines = [f"Category {i}: Product {i}" for i in range(7)]
-        scores = {f"product {i}": 1.0 for i in range(6)}  # only "Category 6" uncited
+        lines = [f"Category {i}: {self._BRANDS[i]}" for i in range(7)]
+        scores = {self._BRANDS[i].lower(): 1.0 for i in range(6)}  # only "Category 6" uncited
         result = select_platforms_and_tools(lines, scores)
         self.assertEqual(len(result), 6)
-        self.assertNotIn("Category 6: Product 6", result)
+        self.assertNotIn(f"Category 6: {self._BRANDS[6]}", result)
 
     def test_a_severe_cut_below_the_floor_falls_back_to_the_full_list(self):
         # Mirrors the real failure this guards against: sparse Job Match
         # coverage dropping clearly-relevant categories (EDR/XDR, firewalls)
         # down to just one surviving line.
-        lines = [f"Category {i}: Product {i}" for i in range(7)]
-        result = select_platforms_and_tools(lines, {"product 0": 1.0})  # only 1 of 7 cited
+        lines = [f"Category {i}: {self._BRANDS[i]}" for i in range(7)]
+        result = select_platforms_and_tools(lines, {self._BRANDS[0].lower(): 1.0})  # only 1 of 7 cited
         self.assertEqual(result, lines)
 
     def test_small_list_keeps_everything_regardless_of_citation(self):
         lines = ["EDR / XDR: Cisco AMP"]
         self.assertEqual(select_platforms_and_tools(lines, {}), lines)
+
+    def test_real_xero_regression_credits_a_vendor_prefix_truncated_citation(self):
+        # Verbatim shape of the real bug: the Job Match cited "...directly
+        # in Cortex XDR, including endpoint isolation..." - missing the
+        # "Palo Alto" vendor prefix the candidate's actual skill record
+        # carries - so the exact substring check in score_for_name alone
+        # never credited it, dropping a flagship, heavily-evidenced tool
+        # from a real Custom CV's Selected Technologies.
+        lines = ["Endpoint & Detection: Cisco AMP, Palo Alto Cortex XDR"]
+        scores = {
+            "cisco amp": 1.0,
+            "investigated and responded to threats directly in cortex xdr, "
+            "including endpoint isolation, live response and ioc blocking": 1.0,
+        }
+        result = select_platforms_and_tools(lines, scores)
+        self.assertEqual(result, ["Endpoint & Detection: Cisco AMP, Palo Alto Cortex XDR"])
+
+    def test_real_xero_regression_credits_a_category_level_citation(self):
+        # Verbatim shape of the real bug: a requirement named "SIEM or Log
+        # Platform" with STRONG_EVIDENCE cited only the generic source
+        # string "SIEM" - never the specific product name "Splunk
+        # Enterprise Security" - so neither the exact nor the fuzzy
+        # name-based check credited it, dropping the candidate's actual
+        # SIEM platform from a real Custom CV even though this requirement
+        # is unambiguously about exactly that product's category.
+        lines = ["SIEM & Investigation: Splunk Enterprise Security"]
+        scores = {"siem": 3.0}
+        tool_skills = [{"name": "Splunk Enterprise Security", "tool_category": "SIEM", "category": "tool"}]
+        requirement_coverage = [
+            {"name": "SIEM or Log Platform", "coverage": "STRONG_EVIDENCE", "sources": ["SIEM"]},
+        ]
+        result = select_platforms_and_tools(lines, scores, tool_skills=tool_skills, requirement_coverage=requirement_coverage)
+        self.assertEqual(result, ["SIEM & Investigation: Splunk Enterprise Security"])
+
+    def test_category_credit_is_not_applied_without_tool_skills_or_requirement_coverage(self):
+        # Backward compatibility: callers that don't pass the new optional
+        # arguments (e.g. existing tests above) get exactly the old
+        # exact-substring-only behaviour, not a silent behaviour change.
+        lines = ["SIEM & Investigation: Splunk Enterprise Security"]
+        result = select_platforms_and_tools(lines, {"siem": 3.0})
+        self.assertEqual(result, lines)  # floor fallback, not category credit - nothing was cited
+
+    def test_fuzzy_match_ignores_generic_marketing_words(self):
+        # "Enterprise Security" is shared marketing boilerplate, not a
+        # distinctive product identifier - must not let an unrelated
+        # product's name fuzzy-match through it.
+        lines = ["Email Security: Mimecast Enterprise Security"]
+        scores = {"some other vendor enterprise security platform": 1.0}
+        result = select_platforms_and_tools(lines, scores)
+        self.assertEqual(result, lines)  # floor fallback - nothing genuinely cited
 
 
 class SelectEvidenceForCvTests(unittest.TestCase):

@@ -22,6 +22,8 @@ class FunctionalGroupForTests(unittest.TestCase):
         self.assertEqual(_functional_group_for("Firewalls"), "Network, DNS & Web")
         self.assertEqual(_functional_group_for("Threat Intelligence / OSINT"), "Threat Intelligence & Supporting Tools")
         self.assertEqual(_functional_group_for("Password Management"), "Identity & Access")
+        self.assertEqual(_functional_group_for("Case Management"), "Case Management & Orchestration")
+        self.assertEqual(_functional_group_for("Security Operations Platforms"), "Case Management & Orchestration")
 
     def test_matching_is_case_insensitive(self):
         self.assertEqual(_functional_group_for("siem"), "SIEM & Investigation")
@@ -61,7 +63,11 @@ class PlatformsAndToolsLinesTests(unittest.TestCase):
         self.assertLessEqual(len(lines), 6)
         by_group = {line.split(":", 1)[0]: line for line in lines}
         self.assertIn("Splunk Enterprise Security", by_group["SIEM & Investigation"])
-        self.assertIn("Jira", by_group["SIEM & Investigation"])
+        # Jira is ticketing/case management, not a SIEM - it must not land
+        # in the same group as Splunk, even though both are SOC-adjacent.
+        self.assertNotIn("Jira", by_group["SIEM & Investigation"])
+        self.assertIn("Jira", by_group["Case Management & Orchestration"])
+        self.assertIn("Cisco SecureX", by_group["Case Management & Orchestration"])
         self.assertIn("Palo Alto Cortex XDR", by_group["Endpoint & Detection"])
         self.assertIn("Cisco AMP", by_group["Endpoint & Detection"])
         self.assertIn("Palo Alto Networks (NGFW)", by_group["Network, DNS & Web"])
@@ -89,7 +95,7 @@ class PlatformsAndToolsLinesTests(unittest.TestCase):
     def test_duplicate_product_names_across_skills_are_not_repeated(self):
         skills = [_Skill("Jira", "Case Management"), _Skill("Jira", "Security Operations Platforms")]
         lines = _platforms_and_tools_lines(skills)
-        self.assertEqual(lines, ["SIEM & Investigation: Jira"])
+        self.assertEqual(lines, ["Case Management & Orchestration: Jira"])
 
     def test_empty_input_returns_empty_list(self):
         self.assertEqual(_platforms_and_tools_lines([]), [])
