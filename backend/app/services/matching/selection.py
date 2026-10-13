@@ -35,7 +35,6 @@ IMPORTANCE_WEIGHT = {"critical": 3, "important": 2, "desirable": 1}
 BULLET_BUDGET_BY_POSITION = [6, 6, 4, 4]
 DEFAULT_OLDER_ROLE_BUDGET = 2
 
-MIN_ACHIEVEMENTS = 4
 MAX_ACHIEVEMENTS = 8
 
 # A real job description's evidence coverage is often sparse for reasons that
@@ -112,26 +111,39 @@ def select_skills(skills: list[dict], source_scores: dict[str, float]) -> list[d
 
 
 def select_achievements(achievements: list[dict], source_scores: dict[str, float]) -> list[dict]:
-    """Rank achievements by relevance to this job and cap at MAX_ACHIEVEMENTS.
-    If fewer than MIN_ACHIEVEMENTS are actually cited by a requirement,
-    backfill with the next-best (in original order) so a sparse job
-    description doesn't produce a barren achievements section."""
+    """Rank achievements by relevance to this job, then backfill all the way
+    toward MAX_ACHIEVEMENTS with whatever's left, prioritising any
+    achievement with a real "measurable_outcome" - a quantified result
+    (e.g. "increased endpoint protection coverage from ~60% to 98%") is
+    strong, durable CV material a recruiter looks for regardless of whether
+    this specific job's JD happened to use language a batched local-model
+    citation pass picked up for it.
+
+    Previously, backfill stopped the moment a floor of 4 was reached - so
+    once 4+ achievements happened to be cited for a job, every uncited one
+    was dropped outright, MAX_ACHIEVEMENTS notwithstanding. That silently
+    dropped a candidate's strongest quantified achievements purely on
+    citation luck - a real one was reported missing from a real Custom CV
+    despite having a confirmed, quantified outcome on record."""
     scored = sorted(
         enumerate(achievements),
         key=lambda pair: score_for_name(pair[1].get("title", ""), source_scores),
         reverse=True,
     )
-    floor = min(MIN_ACHIEVEMENTS, len(achievements))
     cited = [a for i, a in scored if score_for_name(a.get("title", ""), source_scores) > 0]
     selected = cited[:MAX_ACHIEVEMENTS]
-    if len(selected) < floor:
+
+    if len(selected) < MAX_ACHIEVEMENTS:
         selected_ids = {id(a) for a in selected}
-        for i, a in scored:
-            if len(selected) >= floor:
+        remaining = [a for i, a in scored if id(a) not in selected_ids]
+        # Stable sort: measurable-outcome achievements first, each group
+        # keeping its original relative (citation-ranked, then input) order.
+        remaining.sort(key=lambda a: 0 if a.get("measurable_outcome") else 1)
+        for a in remaining:
+            if len(selected) >= MAX_ACHIEVEMENTS:
                 break
-            if id(a) not in selected_ids:
-                selected.append(a)
-                selected_ids.add(id(a))
+            selected.append(a)
+            selected_ids.add(id(a))
     return selected
 
 

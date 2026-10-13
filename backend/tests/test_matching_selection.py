@@ -91,13 +91,48 @@ class SelectAchievementsTests(unittest.TestCase):
         achievements = [{"title": "Cited one"}, {"title": "Uncited two"}, {"title": "Uncited three"}]
         scores = {"cited one": 5.0}
         result = select_achievements(achievements, scores)
-        self.assertEqual(len(result), 3)  # backfilled up to MIN_ACHIEVEMENTS (or total, if fewer)
+        self.assertEqual(len(result), 3)  # backfilled up to MAX_ACHIEVEMENTS (or total, if fewer)
         self.assertEqual(result[0]["title"], "Cited one")
 
     def test_no_citations_at_all_still_returns_up_to_the_floor(self):
         achievements = [{"title": "A"}, {"title": "B"}]
         result = select_achievements(achievements, {})
         self.assertEqual(len(result), 2)
+
+    def test_real_regression_backfills_past_the_floor_to_include_a_measurable_outcome(self):
+        # Verbatim shape of the real bug: 6 achievements already cited (well
+        # past the old floor of 4), one genuinely strong, quantified
+        # achievement left uncited purely because this job's Job Match
+        # citation pass never mentioned it - it must still make the cut,
+        # since there's room below MAX_ACHIEVEMENTS (8).
+        cited = [{"title": f"Cited {i}"} for i in range(6)]
+        quantified = {"title": "Increased endpoint protection coverage from ~60% to 98%",
+                      "measurable_outcome": "Endpoint protection coverage increased from ~60% to 98%"}
+        achievements = cited + [quantified]
+        scores = {f"cited {i}": 1.0 for i in range(6)}
+        result = select_achievements(achievements, scores)
+        self.assertIn(quantified, result)
+
+    def test_measurable_outcome_achievements_are_preferred_in_the_backfill(self):
+        cited = {"title": "Cited"}
+        plain = {"title": "Plain uncited achievement"}
+        quantified = {"title": "Quantified uncited achievement", "measurable_outcome": "50% improvement"}
+        achievements = [cited, plain, quantified]
+        scores = {"cited": 1.0}
+        result = select_achievements(achievements, scores)
+        # Both fit well within MAX_ACHIEVEMENTS, but the quantified one must
+        # be backfilled ahead of the plain one regardless of input order.
+        titles = [a["title"] for a in result]
+        self.assertLess(titles.index("Quantified uncited achievement"), titles.index("Plain uncited achievement"))
+
+    def test_does_not_backfill_past_max_achievements_even_with_measurable_outcomes(self):
+        cited = [{"title": f"Cited {i}"} for i in range(8)]
+        quantified = {"title": "Quantified but no room left", "measurable_outcome": "100% improvement"}
+        achievements = cited + [quantified]
+        scores = {f"cited {i}": 1.0 for i in range(8)}
+        result = select_achievements(achievements, scores)
+        self.assertEqual(len(result), 8)
+        self.assertNotIn(quantified, result)
 
 
 class SelectResponsibilitiesTests(unittest.TestCase):
