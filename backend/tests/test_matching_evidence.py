@@ -582,6 +582,32 @@ class SanitizeScorecardTests(unittest.TestCase):
         self.assertNotIn("Splunk", result["do_not_claim"])
         self.assertIn("AWS Lambda", result["do_not_claim"])
 
+    def test_removes_a_do_not_claim_entry_that_is_a_substring_of_a_real_item(self):
+        # Real-world case: the model put "Physical Security" in do_not_claim
+        # in the same response where the profile had just gained a
+        # dedicated skill ("Physical Security / Lock Bypass (Locksport)")
+        # and an achievement about exactly that - the exact-match check
+        # above never catches this, since the do_not_claim entry is SHORTER
+        # than, not equal to, the real item name that contradicts it.
+        profile = {
+            **PROFILE,
+            "skills": PROFILE["skills"] + [
+                {"name": "Physical Security / Lock Bypass (Locksport)", "aliases": [], "category": "technical"},
+            ],
+        }
+        scorecard = {"strong_matches": [], "do_not_claim": ["Physical Security", "Cloud Infrastructure Security"]}
+        result = sanitize_scorecard(scorecard, profile)
+        self.assertNotIn("Physical Security", result["do_not_claim"])
+        self.assertIn("Cloud Infrastructure Security", result["do_not_claim"])
+
+    def test_substring_do_not_claim_removal_requires_two_significant_words(self):
+        # A single generic word ("Security" alone) must not match almost
+        # every security-related profile item regardless of relevance -
+        # same false-positive guard used elsewhere in this module.
+        scorecard = {"strong_matches": [], "do_not_claim": ["Security"]}
+        result = sanitize_scorecard(scorecard, PROFILE)
+        self.assertIn("Security", result["do_not_claim"])
+
     def test_removes_a_do_not_claim_entry_job_match_confirms_strong(self):
         # Real-world case: the model told the user not to claim "GIAC" when
         # they genuinely hold a GIAC certification and Job Match itself
