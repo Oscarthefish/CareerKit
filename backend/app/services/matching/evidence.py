@@ -599,6 +599,29 @@ def _fuzzy_requirement_coverage(skill_name: str, requirement_coverage: list[dict
     return best[0] if best else None
 
 
+def _do_not_claim_contradicted_by_profile(item: str, known_names: set[str]) -> bool:
+    """Reverse-direction sibling of sanitize_scorecard's exact-match check
+    below: catches a do_not_claim entry that names a general topic (e.g.
+    "Physical Security") which is a literal substring of a LONGER, more
+    specific real profile item (a skill name, achievement title, or
+    responsibility bullet) - rather than an exact match to it. Observed in
+    practice: the model put "Physical Security" in do_not_claim in the same
+    response where the profile had just gained a dedicated skill ("Physical
+    Security / Lock Bypass (Locksport)") and achievement about exactly
+    that. The exact check never catches this shape, since the do_not_claim
+    entry is shorter than, not equal to, the real item name it contradicts.
+
+    Requires 2+ significant words in the do_not_claim entry itself (the
+    same bar _fuzzy_requirement_coverage uses) so a single generic word
+    (e.g. "Security" alone) can never trigger this - it would otherwise
+    match almost every security-related profile item regardless of
+    relevance."""
+    if len(_scorecard_significant_words(item)) < 2:
+        return False
+    item_l = item.strip().lower()
+    return any(item_l in name for name in known_names)
+
+
 def sanitize_scorecard(scorecard: dict, profile: dict, job_match_result: dict | None = None) -> dict:
     """Safety net for the (older, separate) Match Scorecard feature -
     match_scorecard.md instructs the model to cite a specific real profile
@@ -705,7 +728,11 @@ def sanitize_scorecard(scorecard: dict, profile: dict, job_match_result: dict | 
     # verbatim (see _profile_item_names above, the same ground truth the
     # citation-existence check at the top of this function trusts), so this
     # doesn't need a second data source.
-    do_not_claim = [item for item in do_not_claim if item.strip().lower() not in known_names]
+    do_not_claim = [
+        item for item in do_not_claim
+        if item.strip().lower() not in known_names
+        and not _do_not_claim_contradicted_by_profile(item, known_names)
+    ]
 
     do_not_claim_lower = {s.lower() for s in do_not_claim}
     kept_strong = [m for m in kept_strong if (m.get("skill") or "").lower() not in do_not_claim_lower]
