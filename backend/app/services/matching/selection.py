@@ -161,11 +161,53 @@ def select_achievements(achievements: list[dict], source_scores: dict[str, float
     return always_included + selected
 
 
-def select_responsibilities(work_experience: list[dict], source_scores: dict[str, float]) -> list[dict]:
+def _requirement_name_word_sets(requirement_coverage: list[dict]) -> list[set[str]]:
+    """Significant words from every STRONG/PARTIAL-evidence requirement's own
+    NAME (e.g. "Managing, maintaining, and documenting physical security") -
+    a fallback relevance signal for responsibility bullets below, for
+    exactly the case a Job Match citation points at the wrong role's generic
+    description instead of the one specific bullet that's actually the best
+    evidence for it (the same batched-model-recall gap this whole module
+    guards against elsewhere - a real bullet, "Carried out physical security
+    assessments and recommendations...", was reported dropped from a real
+    Custom CV for exactly this reason: the citation for "physical security"
+    pointed at a different role's description, which is never a substring of
+    any individual bullet, so the real bullet scored zero and lost its
+    role's budget cut to less relevant ones)."""
+    sets = []
+    for row in requirement_coverage or []:
+        if row.get("coverage") not in ("STRONG_EVIDENCE", "PARTIAL_EVIDENCE"):
+            continue
+        words = _words(row.get("name", ""))
+        if words:
+            sets.append(words)
+    return sets
+
+
+def _requirement_overlap_score(bullet: str, requirement_word_sets: list[set[str]]) -> float:
+    """1.0 if this bullet shares 2+ significant words with any requirement's
+    own name, else 0.0 - the same "2+ significant words" bar used elsewhere
+    in this codebase's fuzzy matching, to avoid a single generic shared word
+    (e.g. "security") counting as a false-positive match on its own."""
+    bullet_words = _words(bullet)
+    if not bullet_words:
+        return 0.0
+    return 1.0 if any(len(bullet_words & req_words) >= 2 for req_words in requirement_word_sets) else 0.0
+
+
+def select_responsibilities(
+    work_experience: list[dict], source_scores: dict[str, float], requirement_coverage: list[dict] | None = None
+) -> list[dict]:
     """Returns a NEW list of experience dicts (never mutates the input) with
     key_responsibilities trimmed to each role's highest-relevance bullets,
     budgeted more generously for recent roles than old ones. A role's heading
-    survives even if none of its bullets do."""
+    survives even if none of its bullets do.
+
+    requirement_coverage is optional: when given, a bullet that shares 2+
+    significant words with a STRONG/PARTIAL requirement's own name (see
+    _requirement_overlap_score above) gets a relevance boost even if the Job
+    Match's own citation never pointed at it directly."""
+    requirement_word_sets = _requirement_name_word_sets(requirement_coverage) if requirement_coverage else []
     trimmed = []
     for position, exp in enumerate(work_experience):
         budget = (
@@ -174,7 +216,11 @@ def select_responsibilities(work_experience: list[dict], source_scores: dict[str
             else DEFAULT_OLDER_ROLE_BUDGET
         )
         responsibilities = exp.get("key_responsibilities") or []
-        ranked = sorted(responsibilities, key=lambda r: _bullet_score(r, source_scores), reverse=True)
+        ranked = sorted(
+            responsibilities,
+            key=lambda r: _bullet_score(r, source_scores) + _requirement_overlap_score(r, requirement_word_sets),
+            reverse=True,
+        )
         top = set(ranked[:budget])
         # Keep the surviving bullets in their original order rather than
         # score order - reads as a coherent list of duties, not a ranked one.
@@ -332,7 +378,9 @@ def select_evidence_for_cv(profile: dict, requirement_coverage: list[dict]) -> d
     selected = dict(profile)
     selected["skills"] = select_skills(profile.get("skills", []), scores)
     selected["achievements"] = select_achievements(profile.get("achievements", []), scores)
-    selected["work_experience"] = select_responsibilities(profile.get("work_experience", []), scores)
+    selected["work_experience"] = select_responsibilities(
+        profile.get("work_experience", []), scores, requirement_coverage=requirement_coverage
+    )
     selected["projects"] = select_projects(profile.get("projects", []), scores)
     tool_skills = [s for s in profile.get("skills", []) if s.get("category") == "tool"]
     selected["platforms_and_tools_display"] = select_platforms_and_tools(

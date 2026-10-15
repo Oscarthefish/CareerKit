@@ -217,6 +217,48 @@ class SelectResponsibilitiesTests(unittest.TestCase):
         # order should still be the original, not score-sorted.
         self.assertEqual(result[0]["key_responsibilities"], ["low relevance", "high relevance splunk"])
 
+    def test_real_regression_requirement_name_overlap_rescues_a_miscited_bullet(self):
+        # Verbatim shape of the real bug: a Job Match citation for "physical
+        # security" pointed at a DIFFERENT role's description text (never a
+        # substring of any bullet here), so the one bullet that's actually
+        # the best evidence for it scored zero on citation alone and lost
+        # its role's position-3 budget (4) to other, less relevant bullets.
+        target = "Carried out physical security assessments and recommendations as part of setting up the Auckland office in 2017"
+        other_bullets = [f"Some other duty {i} with no particular relevance" for i in range(10)]
+        work_experience = [{"role": "Cyber Security Analyst", "key_responsibilities": other_bullets + [target]}]
+        # The citation source is a role-level description, which never
+        # literally appears inside any individual bullet - exactly why
+        # _bullet_score alone misses it.
+        scores = {"work experience: network security analyst at the workshop (description)": 1.0}
+        requirement_coverage = [
+            {"name": "Managing, maintaining, and documenting physical security", "coverage": "PARTIAL_EVIDENCE"},
+        ]
+        result = select_responsibilities(work_experience, scores, requirement_coverage=requirement_coverage)
+        self.assertIn(target, result[0]["key_responsibilities"])
+
+    def test_requirement_overlap_is_ignored_without_two_shared_significant_words(self):
+        # A single shared word ("security") must not be enough on its own -
+        # same false-positive guard used elsewhere in this module.
+        bullet = "Investigated phishing and malware alerts"
+        other_bullets = [f"Some other duty {i} with no particular relevance" for i in range(6)]
+        work_experience = [{"role": "Analyst", "key_responsibilities": other_bullets + [bullet]}]
+        requirement_coverage = [{"name": "Physical security systems experience", "coverage": "STRONG_EVIDENCE"}]
+        result = select_responsibilities(work_experience, {}, requirement_coverage=requirement_coverage)
+        self.assertNotIn(bullet, result[0]["key_responsibilities"])
+
+    def test_requirement_overlap_ignores_no_and_unknown_evidence_rows(self):
+        target = "Carried out physical security assessments and recommendations"
+        other_bullets = [f"Some other duty {i} with no particular relevance" for i in range(6)]
+        work_experience = [{"role": "Analyst", "key_responsibilities": other_bullets + [target]}]
+        requirement_coverage = [{"name": "Physical security systems experience", "coverage": "NO_EVIDENCE"}]
+        result = select_responsibilities(work_experience, {}, requirement_coverage=requirement_coverage)
+        self.assertNotIn(target, result[0]["key_responsibilities"])
+
+    def test_backward_compatible_without_requirement_coverage(self):
+        work_experience = [{"role": "X", "key_responsibilities": ["a", "b"]}]
+        result = select_responsibilities(work_experience, {})
+        self.assertEqual(result[0]["key_responsibilities"], ["a", "b"])
+
 
 class SelectProjectsTests(unittest.TestCase):
     def test_keeps_only_cited_projects_when_there_are_several(self):
