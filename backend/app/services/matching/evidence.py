@@ -599,7 +599,29 @@ def _fuzzy_requirement_coverage(skill_name: str, requirement_coverage: list[dict
     return best[0] if best else None
 
 
-def _do_not_claim_contradicted_by_profile(item: str, known_names: set[str]) -> bool:
+def _confirmed_hands_on_candidates(profile: dict) -> list[tuple[str, str]]:
+    """Every (kind, name) pair for a skill name or achievement title at the
+    confirmed_hands_on confidence tier - the strongest, most conservative
+    tier in this codebase's vocabulary, and the only one trusted to bypass
+    the model's own classification rather than just double-check it.
+    Deliberately NAMES only (not full prose fields like situation/action/
+    result or work descriptions) - those are long and varied enough that a
+    2-significant-word, 0.4-ratio overlap against them risks a coincidental
+    match; a skill name or achievement title is short and specific enough
+    that the same bar is safe."""
+    candidates = []
+    for s in profile.get("skills", []):
+        if s.get("confidence") == "confirmed_hands_on" and s.get("name"):
+            candidates.append(("Skill", s["name"]))
+    for a in profile.get("achievements", []):
+        if a.get("confidence") == "confirmed_hands_on" and a.get("title"):
+            candidates.append(("Achievement", a["title"]))
+    return candidates
+
+
+def _do_not_claim_contradicted_by_profile(
+    item: str, known_names: set[str], candidates: list[tuple[str, str]] | None = None
+) -> bool:
     """Reverse-direction sibling of sanitize_scorecard's exact-match check
     below: catches a do_not_claim entry that names a general topic (e.g.
     "Physical Security") which is a literal substring of a LONGER, more
@@ -611,30 +633,59 @@ def _do_not_claim_contradicted_by_profile(item: str, known_names: set[str]) -> b
     that. The exact check never catches this shape, since the do_not_claim
     entry is shorter than, not equal to, the real item name it contradicts.
 
+    Also checks word-overlap (2+ significant words, 0.4+ ratio of the
+    smaller side - the same bar _force_missing_strong_matches uses) against
+    confirmed_hands_on candidates, for the case the substring check alone
+    cannot catch: a do_not_claim entry phrased as a different SENTENCE
+    structure from the real item rather than a short topic name contained
+    within it (e.g. "Exposure to cyber and/or physical security systems" in
+    do_not_claim vs. a real skill named "Physical Security / Lock Bypass
+    (Locksport)" - neither is a substring of the other, but they share
+    "physical"/"security" at a 0.4 ratio).
+
     Requires 2+ significant words in the do_not_claim entry itself (the
     same bar _fuzzy_requirement_coverage uses) so a single generic word
     (e.g. "Security" alone) can never trigger this - it would otherwise
     match almost every security-related profile item regardless of
     relevance."""
-    if len(_scorecard_significant_words(item)) < 2:
+    item_words = _scorecard_significant_words(item)
+    if len(item_words) < 2:
         return False
     item_l = item.strip().lower()
-    return any(item_l in name for name in known_names)
+    if any(item_l in name for name in known_names):
+        return True
+    for _, name in candidates or []:
+        name_words = _scorecard_significant_words(name)
+        if len(name_words) < 2:
+            continue
+        overlap = item_words & name_words
+        if len(overlap) >= 2 and len(overlap) / min(len(item_words), len(name_words)) >= 0.4:
+            return True
+    return False
 
 
-def _requirement_already_addressed(req_words: set[str], scorecard: dict) -> bool:
-    """True if any existing scorecard entry - strong/partial/quick-learning/
-    genuine-gap or do_not_claim - already shares 2+ significant words with
-    this requirement, meaning the model DID evaluate it (whatever the
-    verdict). Used to decide whether _force_missing_strong_matches below
-    should even consider a requirement - it only ever adds one the model
-    evaluated NONE of its fields on, never second-guesses a verdict it did
-    reach."""
-    for key in ("strong_matches", "partial_matches", "quick_learning_gaps", "genuine_gaps"):
-        for entry in scorecard.get(key) or []:
-            if isinstance(entry, dict) and entry.get("skill"):
-                if len(req_words & _scorecard_significant_words(entry["skill"])) >= 2:
-                    return True
+def _requirement_already_resolved(req_words: set[str], scorecard: dict) -> bool:
+    """True if the model already gave this requirement a CONFIDENT verdict
+    either way - a strong_matches entry, or a do_not_claim entry. Used to
+    decide whether _force_missing_strong_matches below should even consider
+    a requirement.
+
+    Deliberately does NOT count partial_matches/quick_learning_gaps/
+    genuine_gaps as "resolved": those are exactly the buckets a
+    confirmed_hands_on skill or achievement should never end up
+    contradicted by (observed in practice: the model placed "Physical
+    Security" in genuine_gaps citing "Proficiency: Familiar", when the
+    real, named skill on record is confidence confirmed_hands_on,
+    proficiency "Proficient" - a wrong, self-contradicted downgrade of
+    real strong evidence, not a legitimate judgement call to leave alone).
+    A requirement sitting in one of these three weaker buckets is treated
+    the same as total silence - still eligible to be forced into
+    strong_matches, with the weaker entry removed afterwards (see
+    sanitize_scorecard)."""
+    for entry in scorecard.get("strong_matches") or []:
+        if isinstance(entry, dict) and entry.get("skill"):
+            if len(req_words & _scorecard_significant_words(entry["skill"])) >= 2:
+                return True
     for item in scorecard.get("do_not_claim") or []:
         if len(req_words & _scorecard_significant_words(item)) >= 2:
             return True
@@ -645,32 +696,31 @@ def _force_missing_strong_matches(scorecard: dict, job_analysis: dict, profile: 
     """Deterministic backstop for a real, observed Scorecard failure mode:
     even after match_scorecard.md's METHOD was extended to walk
     "key_responsibilities" (not just "required_skills"/"preferred_skills"),
-    the model has still been seen never once mentioning a job requirement
-    anywhere in its response - not as a strong match, not as a gap, not in
-    do_not_claim - despite the candidate having a confirmed_hands_on skill
-    or achievement that is unambiguously about exactly that requirement
-    (e.g. a dedicated "Physical Security / Lock Bypass" skill and
-    achievement, for a job whose own description names "physical security"
-    as a headline requirement). Since the cover letter is built directly
-    from "strong_matches", a requirement the model silently never evaluated
-    at all never has a chance to reach the user - no amount of re-running
-    guarantees the model will eventually cover it.
+    the model has still been seen either never once mentioning a job
+    requirement anywhere in its response, OR acknowledging the topic but
+    getting it wrong - placing it in partial_matches/quick_learning_gaps/
+    genuine_gaps with a citation that misstates the candidate's own
+    recorded confidence (e.g. citing "Proficiency: Familiar" for a skill
+    actually on record as confirmed_hands_on / "Proficient") - despite the
+    candidate having a confirmed_hands_on skill or achievement that is
+    unambiguously about exactly that requirement (e.g. a dedicated
+    "Physical Security / Lock Bypass" skill and achievement, for a job
+    whose own description names "physical security" as a headline
+    requirement). Since the cover letter is built directly from
+    "strong_matches", either failure means a requirement the candidate
+    genuinely has confirmed evidence for never has a chance to reach the
+    user - no amount of re-running reliably fixes it.
 
     For every item in required_skills/preferred_skills/key_responsibilities
-    that _requirement_already_addressed finds no existing verdict for at
-    all, checks for a confirmed_hands_on skill name or achievement title
-    sharing 2+ significant words with it - the same bar used throughout
-    this module - and forces a strong_matches entry for the match found.
-    Restricted to confirmed_hands_on specifically (the strongest, most
-    conservative confidence tier) since this bypasses the model's own
-    judgement entirely rather than just double-checking it."""
-    candidates = []
-    for s in profile.get("skills", []):
-        if s.get("confidence") == "confirmed_hands_on" and s.get("name"):
-            candidates.append(("Skill", s["name"]))
-    for a in profile.get("achievements", []):
-        if a.get("confidence") == "confirmed_hands_on" and a.get("title"):
-            candidates.append(("Achievement", a["title"]))
+    that _requirement_already_resolved finds no CONFIDENT verdict for
+    (strong_matches or do_not_claim), checks for a confirmed_hands_on skill
+    name or achievement title sharing 2+ significant words with it - the
+    same bar used throughout this module - and forces a strong_matches
+    entry for the match found. Restricted to confirmed_hands_on
+    specifically (the strongest, most conservative confidence tier) since
+    this bypasses the model's own judgement entirely rather than just
+    double-checking it."""
+    candidates = _confirmed_hands_on_candidates(profile)
 
     requirement_texts = []
     for key in ("required_skills", "preferred_skills", "key_responsibilities"):
@@ -682,7 +732,7 @@ def _force_missing_strong_matches(scorecard: dict, job_analysis: dict, profile: 
         req_words = _scorecard_significant_words(req_text)
         if len(req_words) < 2:
             continue
-        if _requirement_already_addressed(req_words, scorecard):
+        if _requirement_already_resolved(req_words, scorecard):
             continue
         # Skip a requirement that's just a near-duplicate (2+ word overlap)
         # of one already forced this pass, so near-identical phrasing for
@@ -691,11 +741,48 @@ def _force_missing_strong_matches(scorecard: dict, job_analysis: dict, profile: 
             continue
         for kind, name in candidates:
             name_words = _scorecard_significant_words(name)
-            if len(name_words) >= 2 and len(req_words & name_words) >= 2:
+            if len(name_words) < 2:
+                continue
+            overlap = req_words & name_words
+            # Raw count (>=2) alone let through a real false positive in
+            # testing: "working knowledge of Windows OS, networking,
+            # OFFICE 365, and IT SECURITY practices" matched a physical
+            # SECURITY achievement about setting up a physical OFFICE -
+            # "office" and "security" are both genuinely shared words, but
+            # mean something completely different in each (workplace
+            # building vs. software product; building access vs. IT
+            # practice). Also requiring the overlap to be a meaningful
+            # SHARE of the smaller phrase (not just an absolute count)
+            # rejects that coincidence (2 of 8 words, ratio 0.25) while
+            # still passing the real "physical security" match this exists
+            # to catch (2 of 5 words, ratio 0.4).
+            if len(overlap) >= 2 and len(overlap) / min(len(req_words), len(name_words)) >= 0.4:
                 forced.append({"skill": req_text, "evidence": f"{kind}: {name}"})
                 claimed_requirement_words.append(req_words)
                 break
     return forced
+
+
+def _strip_weak_entries_superseded_by_forced_matches(scorecard: dict, forced: list[dict]) -> None:
+    """Mutates scorecard in place: once a requirement has been forced into
+    strong_matches (see _force_missing_strong_matches), removes any
+    partial_matches/quick_learning_gaps/genuine_gaps entry that shares 2+
+    significant words with it - otherwise the same topic would read as
+    both a confirmed strength AND a gap in the same scorecard (observed in
+    practice: "Physical Security" in genuine_gaps, quick_learning_gaps AND
+    partial_matches all at once, contradicting a confirmed_hands_on skill
+    on record)."""
+    if not forced:
+        return
+    forced_words = [_scorecard_significant_words(m["skill"]) for m in forced]
+    for key in ("partial_matches", "quick_learning_gaps", "genuine_gaps"):
+        kept = []
+        for entry in scorecard.get(key) or []:
+            entry_words = _scorecard_significant_words(entry.get("skill", "")) if isinstance(entry, dict) else set()
+            if entry_words and any(len(entry_words & fw) >= 2 for fw in forced_words):
+                continue
+            kept.append(entry)
+        scorecard[key] = kept
 
 
 def sanitize_scorecard(
@@ -758,6 +845,7 @@ def sanitize_scorecard(
     requirement with zero existing verdict) so it only ever fills a genuine
     silence, never overrides the model's own judgement call."""
     known_names = _profile_item_names(profile)
+    confirmed_candidates = _confirmed_hands_on_candidates(profile)
     result = dict(scorecard)
     do_not_claim = list(result.get("do_not_claim") or [])
 
@@ -818,7 +906,7 @@ def sanitize_scorecard(
     do_not_claim = [
         item for item in do_not_claim
         if item.strip().lower() not in known_names
-        and not _do_not_claim_contradicted_by_profile(item, known_names)
+        and not _do_not_claim_contradicted_by_profile(item, known_names, confirmed_candidates)
     ]
 
     do_not_claim_lower = {s.lower() for s in do_not_claim}
@@ -830,15 +918,25 @@ def sanitize_scorecard(
     # as well.
     partial_matches = [m for m in partial_matches if (m.get("skill") or "").lower() not in do_not_claim_lower]
 
+    quick_learning_gaps = list(result.get("quick_learning_gaps") or [])
+    genuine_gaps = list(result.get("genuine_gaps") or [])
+
     if job_analysis:
-        kept_strong = kept_strong + _force_missing_strong_matches(
-            {"strong_matches": kept_strong, "partial_matches": partial_matches,
-             "quick_learning_gaps": result.get("quick_learning_gaps"),
-             "genuine_gaps": result.get("genuine_gaps"), "do_not_claim": do_not_claim},
-            job_analysis, profile,
-        )
+        scratch = {
+            "strong_matches": kept_strong, "partial_matches": partial_matches,
+            "quick_learning_gaps": quick_learning_gaps, "genuine_gaps": genuine_gaps,
+            "do_not_claim": do_not_claim,
+        }
+        forced = _force_missing_strong_matches(scratch, job_analysis, profile)
+        kept_strong = kept_strong + forced
+        _strip_weak_entries_superseded_by_forced_matches(scratch, forced)
+        partial_matches = scratch["partial_matches"]
+        quick_learning_gaps = scratch["quick_learning_gaps"]
+        genuine_gaps = scratch["genuine_gaps"]
 
     result["strong_matches"] = kept_strong
     result["partial_matches"] = partial_matches
+    result["quick_learning_gaps"] = quick_learning_gaps
+    result["genuine_gaps"] = genuine_gaps
     result["do_not_claim"] = do_not_claim
     return result

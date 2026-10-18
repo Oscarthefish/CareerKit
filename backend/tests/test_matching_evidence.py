@@ -600,6 +600,39 @@ class SanitizeScorecardTests(unittest.TestCase):
         self.assertNotIn("Physical Security", result["do_not_claim"])
         self.assertIn("Cloud Infrastructure Security", result["do_not_claim"])
 
+    def test_real_regression_removes_a_do_not_claim_entry_phrased_as_a_different_sentence(self):
+        # Verbatim shape of a real bug: "Exposure to cyber and/or physical
+        # security systems" (the job's own preferred_skill phrasing) ended
+        # up in do_not_claim, right after the profile gained a dedicated
+        # confirmed_hands_on skill ("Physical Security / Lock Bypass
+        # (Locksport)"). Neither string is a substring of the other - the
+        # pure substring check above cannot catch this - but they share
+        # "physical"/"security" at a 0.4+ overlap ratio.
+        profile = {
+            **PROFILE,
+            "skills": PROFILE["skills"] + [
+                {"name": "Physical Security / Lock Bypass (Locksport)", "confidence": "confirmed_hands_on"},
+            ],
+        }
+        scorecard = {
+            "strong_matches": [],
+            "do_not_claim": ["Exposure to cyber and/or physical security systems", "Previous experience in Level 1 & 2 support"],
+        }
+        result = sanitize_scorecard(scorecard, profile)
+        self.assertNotIn("Exposure to cyber and/or physical security systems", result["do_not_claim"])
+        self.assertIn("Previous experience in Level 1 & 2 support", result["do_not_claim"])
+
+    def test_sentence_shaped_do_not_claim_removal_is_not_triggered_without_confirmed_hands_on(self):
+        profile = {
+            **PROFILE,
+            "skills": PROFILE["skills"] + [
+                {"name": "Physical Security / Lock Bypass (Locksport)", "confidence": "familiarity"},
+            ],
+        }
+        scorecard = {"strong_matches": [], "do_not_claim": ["Exposure to cyber and/or physical security systems"]}
+        result = sanitize_scorecard(scorecard, profile)
+        self.assertIn("Exposure to cyber and/or physical security systems", result["do_not_claim"])
+
     def test_substring_do_not_claim_removal_requires_two_significant_words(self):
         # A single generic word ("Security" alone) must not match almost
         # every security-related profile item regardless of relevance -
@@ -792,10 +825,17 @@ class SanitizeScorecardTests(unittest.TestCase):
         result = sanitize_scorecard(scorecard, profile, job_analysis=job_analysis)
         self.assertEqual(result["strong_matches"], [])
 
-    def test_does_not_force_a_match_when_the_model_already_reached_a_verdict(self):
-        # The model DID evaluate this requirement (as a genuine_gap) - the
-        # forcing mechanism must never override a verdict it already made,
-        # even though a confirmed_hands_on item happens to exist too.
+    def test_real_regression_promotes_a_weak_verdict_contradicted_by_confirmed_hands_on_evidence(self):
+        # Verbatim shape of a real bug: the model DID mention physical
+        # security, but downgraded it to genuine_gaps (also duplicated in
+        # partial_matches/quick_learning_gaps in the real response) citing
+        # "Proficiency: Familiar" - directly contradicting the real skill
+        # on record, which is confidence confirmed_hands_on. A weak verdict
+        # that misstates the candidate's own recorded confidence is not a
+        # legitimate judgement call to leave standing - it must be
+        # promoted to strong_matches, with the contradicted weak entries
+        # removed so the same topic doesn't read as both a strength and a
+        # gap in the same scorecard.
         profile = {
             **PROFILE,
             "skills": PROFILE["skills"] + [
@@ -805,8 +845,56 @@ class SanitizeScorecardTests(unittest.TestCase):
         job_analysis = {"key_responsibilities": ["manage, maintain, and document physical security"]}
         scorecard = {
             "strong_matches": [], "do_not_claim": [],
-            "genuine_gaps": [{"skill": "Physical security systems", "impact": "High impact for this role."}],
+            "partial_matches": [{"skill": "Physical Security", "gap": "Lacks direct experience.", "evidence": "Skills > Physical Security > Proficiency: Familiar"}],
+            "quick_learning_gaps": [{"skill": "Physical Security", "rationale": "Can learn quickly."}],
+            "genuine_gaps": [{"skill": "Physical Security", "impact": "High impact for this role."}],
         }
+        result = sanitize_scorecard(scorecard, profile, job_analysis=job_analysis)
+        skills_matched = [m["skill"] for m in result["strong_matches"]]
+        self.assertIn("manage, maintain, and document physical security", skills_matched)
+        self.assertEqual(result["partial_matches"], [])
+        self.assertEqual(result["quick_learning_gaps"], [])
+        self.assertEqual(result["genuine_gaps"], [])
+
+    def test_does_not_force_a_match_already_in_strong_matches_or_do_not_claim(self):
+        # A requirement the model already gave a CONFIDENT verdict on
+        # (strong_matches or do_not_claim, as opposed to the weaker
+        # partial/quick-learning/genuine-gap buckets above) is never
+        # second-guessed.
+        profile = {
+            **PROFILE,
+            "skills": PROFILE["skills"] + [
+                {"name": "Physical Security / Lock Bypass (Locksport)", "confidence": "confirmed_hands_on"},
+            ],
+        }
+        job_analysis = {"key_responsibilities": ["manage, maintain, and document physical security"]}
+        scorecard = {
+            "strong_matches": [{"skill": "Physical Security", "evidence": "Skill: Physical Security / Lock Bypass (Locksport)"}],
+            "do_not_claim": [],
+        }
+        result = sanitize_scorecard(scorecard, profile, job_analysis=job_analysis)
+        self.assertEqual(len(result["strong_matches"]), 1)
+
+    def test_real_regression_does_not_force_a_match_on_a_coincidental_shared_word(self):
+        # Verbatim shape of a real false positive hit while verifying the
+        # fix above: "working knowledge of Windows OS, networking, Office
+        # 365, and IT security practices" shares "office" and "security"
+        # with "Tested physical security of the Auckland OFFICE via lock
+        # bypass techniques" - 2 raw words, but "office" and "security"
+        # mean something completely different in each (a software product
+        # and IT practice vs. a physical workplace and building access).
+        # The ratio guard (2 of 8 words = 0.25) must reject this.
+        profile = {
+            **PROFILE,
+            "achievements": PROFILE["achievements"] + [
+                {"title": "Tested physical security of the Auckland office via lock bypass techniques",
+                 "confidence": "confirmed_hands_on"},
+            ],
+        }
+        job_analysis = {
+            "preferred_skills": ["working knowledge of Windows OS, networking, Office 365, and IT security practices"],
+        }
+        scorecard = {"strong_matches": [], "do_not_claim": []}
         result = sanitize_scorecard(scorecard, profile, job_analysis=job_analysis)
         self.assertEqual(result["strong_matches"], [])
 
