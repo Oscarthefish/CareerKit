@@ -757,7 +757,14 @@ def _force_missing_strong_matches(scorecard: dict, job_analysis: dict, profile: 
             # still passing the real "physical security" match this exists
             # to catch (2 of 5 words, ratio 0.4).
             if len(overlap) >= 2 and len(overlap) / min(len(req_words), len(name_words)) >= 0.4:
-                forced.append({"skill": req_text, "evidence": f"{kind}: {name}"})
+                # "forced": True marks this entry as one sanitize_scorecard
+                # itself had to inject rather than one the model produced -
+                # the cover letter generator uses this to specifically
+                # guarantee these particular matches get mentioned (see
+                # applications.py's _ensure_forced_matches_mentioned),
+                # since they're the ones proven at risk of being dropped
+                # again by a free-text generation step's own selection bias.
+                forced.append({"skill": req_text, "evidence": f"{kind}: {name}", "forced": True})
                 claimed_requirement_words.append(req_words)
                 break
     return forced

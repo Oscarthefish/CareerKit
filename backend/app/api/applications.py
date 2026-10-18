@@ -45,6 +45,63 @@ def _company_display(app: JobApplication) -> str:
     return company
 
 
+_SIGN_OFF_PATTERN = re.compile(r"\n(Sincerely|Kind regards|Regards|Yours sincerely|Yours faithfully)\s*,?\s*\n", re.IGNORECASE)
+
+
+def _ensure_forced_matches_mentioned(letter: str, scorecard: dict) -> str:
+    """Safety net: cover_letter.md instructs the model that any
+    strong_matches entry corresponding to a job's own hidden priority is
+    mandatory to cover - but a local model has been observed ignoring that
+    instruction anyway for a strong_matches entry sanitize_scorecard itself
+    had to force in (see evidence.py's _force_missing_strong_matches),
+    defaulting instead to whichever matches feel most generic (incident
+    response, SIEM) even with a more specific, job-defining one sitting
+    right there with real evidence. Rather than chase every possible
+    hidden_priority generically - a hazard, since a broad topic like
+    "cyber security" can look "already mentioned" in any security-themed
+    letter via a generic shared word like "security" without the letter
+    ever having referenced the SPECIFIC item at all - this only ever
+    double-checks a "forced" entry specifically, since those are the ones
+    already proven at risk of being dropped again by a free-text
+    generation step's own selection bias.
+
+    For each forced entry, checks whether its own evidence's NAME (the
+    specific cited skill/achievement, not the broader requirement text) is
+    substantively mentioned in the letter - 2+ significant words of that
+    name, so a single generic shared word can't count as "mentioned".
+    Appends one plain, factual sentence per missing one, built from its
+    own evidence, inserted as its own paragraph directly before the
+    sign-off rather than tacked on after it."""
+    from ..services.matching.evidence import _scorecard_significant_words
+
+    letter_words = _scorecard_significant_words(letter)
+    additions = []
+    for m in (scorecard or {}).get("strong_matches") or []:
+        if not (isinstance(m, dict) and m.get("forced")):
+            continue
+        evidence = (m.get("evidence") or "").strip()
+        if not evidence:
+            continue
+        kind, _, name = evidence.partition(":")
+        name = name.strip() or evidence
+        name_words = _scorecard_significant_words(name)
+        if len(name_words) < 2 or len(name_words & letter_words) >= 2:
+            continue
+        if kind.strip().lower() == "achievement" and name:
+            additions.append(f"In a previous role, I {name[0].lower() + name[1:]}, directly relevant to this role.")
+        else:
+            additions.append(f"My background also includes hands-on experience with {name}, directly relevant to this role.")
+
+    if not additions:
+        return letter
+    addition_text = " ".join(additions)
+    sign_off_match = _SIGN_OFF_PATTERN.search(letter)
+    if sign_off_match:
+        insert_at = sign_off_match.start()
+        return letter[:insert_at].rstrip() + "\n\n" + addition_text + letter[insert_at:]
+    return letter.rstrip() + "\n\n" + addition_text
+
+
 _CV_LENGTH_GUIDANCE = {
     "1-page": (
         "The candidate has set a target length of one page: aim for roughly 450-650 words "
@@ -593,6 +650,8 @@ async def generate_cover_letter(app_id: int, db: Session = Depends(get_db)):
         in_progress_certs=in_progress_cert_names(profile),
         former_employers=former_employer_names(profile),
     ))
+    if app.match_scorecard:
+        letter = _ensure_forced_matches_mentioned(letter, json.loads(app.match_scorecard))
     app.cover_letter = letter
     db.commit()
     persist_application_files(db, app_id)

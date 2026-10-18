@@ -2,7 +2,7 @@ import json
 import unittest
 from unittest.mock import Mock
 
-from app.api.applications import _export_download_name, _job_match_summary
+from app.api.applications import _ensure_forced_matches_mentioned, _export_download_name, _job_match_summary
 
 
 class JobMatchSummaryTests(unittest.TestCase):
@@ -49,6 +49,93 @@ class ExportDownloadNameTests(unittest.TestCase):
     def test_role_only_omits_the_missing_company_cleanly(self):
         name = _export_download_name(_app(None, "SOC Analyst"), "custom-cv")
         self.assertEqual(name, "SOC Analyst - Custom CV")
+
+
+class EnsureForcedMatchesMentionedTests(unittest.TestCase):
+    def test_real_regression_appends_a_sentence_for_a_missing_forced_skill_match(self):
+        # Verbatim shape of the real bug: a forced strong_matches entry for
+        # a skill ("Physical Security / Lock Bypass (Locksport)") - correct
+        # and present - but the generated letter never mentioned it at
+        # all, defaulting entirely to generic SOC/incident-response content.
+        letter = (
+            "Kia ora,\n\n"
+            "I am writing to express my interest in the IT Support Engineer role.\n\n"
+            "I have over eight years of experience in Security Operations roles, "
+            "investigating incidents across SIEM and EDR platforms.\n\n"
+            "Sincerely,\nJason Hill"
+        )
+        scorecard = {
+            "strong_matches": [
+                {"skill": "Incident Response", "evidence": "Achievement: Led ransomware response"},
+                {
+                    "skill": "exposure to cyber and/or physical security systems",
+                    "evidence": "Skill: Physical Security / Lock Bypass (Locksport)",
+                    "forced": True,
+                },
+            ]
+        }
+        result = _ensure_forced_matches_mentioned(letter, scorecard)
+        self.assertIn("Physical Security / Lock Bypass (Locksport)", result)
+        self.assertIn("Sincerely", result)
+        # Inserted before the sign-off, not tacked on after it.
+        self.assertLess(result.index("Physical Security"), result.index("Sincerely"))
+
+    def test_achievement_evidence_is_phrased_as_a_first_person_sentence(self):
+        letter = "Kia ora,\n\nSome generic content here about SIEM and EDR.\n\nSincerely,\nJason Hill"
+        scorecard = {
+            "strong_matches": [{
+                "skill": "manage, maintain, and document physical security",
+                "evidence": "Achievement: Tested physical security of the Auckland office via lock bypass techniques",
+                "forced": True,
+            }]
+        }
+        result = _ensure_forced_matches_mentioned(letter, scorecard)
+        self.assertIn("I tested physical security of the Auckland office", result)
+
+    def test_does_not_duplicate_a_match_already_substantively_mentioned(self):
+        letter = (
+            "Kia ora,\n\n"
+            "My background includes hands-on experience with Physical Security / Lock Bypass "
+            "(Locksport), gained while testing office access controls.\n\n"
+            "Sincerely,\nJason Hill"
+        )
+        scorecard = {
+            "strong_matches": [{
+                "skill": "exposure to cyber and/or physical security systems",
+                "evidence": "Skill: Physical Security / Lock Bypass (Locksport)",
+                "forced": True,
+            }]
+        }
+        result = _ensure_forced_matches_mentioned(letter, scorecard)
+        self.assertEqual(result, letter)
+
+    def test_ignores_non_forced_matches(self):
+        letter = "Kia ora,\n\nSome generic content.\n\nSincerely,\nJason Hill"
+        scorecard = {
+            "strong_matches": [{
+                "skill": "exposure to cyber and/or physical security systems",
+                "evidence": "Skill: Physical Security / Lock Bypass (Locksport)",
+            }]
+        }
+        result = _ensure_forced_matches_mentioned(letter, scorecard)
+        self.assertEqual(result, letter)
+
+    def test_appends_at_the_end_when_no_sign_off_is_found(self):
+        letter = "Just some body text with no sign-off line at all."
+        scorecard = {
+            "strong_matches": [{
+                "skill": "exposure to cyber and/or physical security systems",
+                "evidence": "Skill: Physical Security / Lock Bypass (Locksport)",
+                "forced": True,
+            }]
+        }
+        result = _ensure_forced_matches_mentioned(letter, scorecard)
+        self.assertTrue(result.startswith(letter))
+        self.assertIn("Physical Security / Lock Bypass (Locksport)", result)
+
+    def test_empty_scorecard_returns_letter_unchanged(self):
+        letter = "Kia ora,\n\nSome content.\n\nSincerely,\nJason Hill"
+        self.assertEqual(_ensure_forced_matches_mentioned(letter, {}), letter)
 
 
 if __name__ == "__main__":
