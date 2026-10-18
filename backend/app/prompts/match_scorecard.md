@@ -13,7 +13,7 @@ Job Analysis:
 Compare the candidate profile against the job requirements and produce an honest, direct match scorecard.
 
 METHOD (follow exactly):
-1. Go through EACH item in the job analysis "required_skills" and "preferred_skills" one at a time.
+1. Go through EACH item in the job analysis's "required_skills", "preferred_skills" AND "key_responsibilities" one at a time - not just the first two. A job description often states its most defining, concrete requirements as a responsibility rather than a listed skill (e.g. "manage, maintain and document physical security" appearing only under key_responsibilities, never phrased as a "skill" at all) - skipping key_responsibilities would silently drop exactly the kind of requirement that most distinguishes this specific role from a generic one in the same broad field, and produce a scorecard (and any cover letter built from it) that reads like a template pitch for the wrong job.
 2. For each one, look for DIRECT evidence in the candidate profile: a named tool in a role's technologies or an achievement's tools_involved, a skill entry, a certification, a project, or a training entry. Job-title similarity or working "in the same field" is NOT evidence.
 3. Classify it:
    - "strong_matches": the profile clearly evidences it. You MUST cite the specific profile item in "evidence" (name the employer, role, project, achievement, certification or tool). If you cannot name a specific profile item, it is NOT a strong match.
