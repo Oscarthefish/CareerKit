@@ -727,6 +727,100 @@ class SanitizeScorecardTests(unittest.TestCase):
         result = sanitize_scorecard(scorecard, PROFILE, job_match_result=None)
         self.assertEqual(len(result["strong_matches"]), 1)
 
+    def test_real_regression_forces_a_strong_match_for_a_silently_skipped_requirement(self):
+        # Verbatim shape of the real bug: a confirmed_hands_on skill AND
+        # achievement for physical security existed on the profile, and the
+        # job explicitly named "manage, maintain, and document physical
+        # security" as a key_responsibility - but across several live
+        # regenerations the model never mentioned physical security
+        # anywhere in its response at all (not strong, not partial, not a
+        # gap, not do_not_claim). That silence must not reach the user as
+        # if the requirement was ever actually evaluated.
+        profile = {
+            **PROFILE,
+            "skills": PROFILE["skills"] + [
+                {"name": "Physical Security / Lock Bypass (Locksport)", "confidence": "confirmed_hands_on"},
+            ],
+            "achievements": PROFILE["achievements"] + [
+                {"title": "Tested physical security of the Auckland office via lock bypass techniques",
+                 "confidence": "confirmed_hands_on"},
+            ],
+        }
+        job_analysis = {
+            "required_skills": ["strong communication skills"],
+            "key_responsibilities": [
+                "manage, maintain, and document physical security",
+                "monitor, resolve, and patch for incidents, breaches, and vulnerabilities",
+            ],
+        }
+        scorecard = {
+            "strong_matches": [{"skill": "Incident Response", "evidence": "Achievement: Led ransomware response"}],
+            "do_not_claim": [],
+        }
+        result = sanitize_scorecard(scorecard, profile, job_analysis=job_analysis)
+        skills_matched = [m["skill"] for m in result["strong_matches"]]
+        self.assertIn("manage, maintain, and document physical security", skills_matched)
+        forced = next(m for m in result["strong_matches"] if m["skill"] == "manage, maintain, and document physical security")
+        self.assertIn("Physical Security", forced["evidence"])
+
+    def test_does_not_force_a_duplicate_for_a_near_identical_requirement_phrasing(self):
+        profile = {
+            **PROFILE,
+            "skills": PROFILE["skills"] + [
+                {"name": "Physical Security / Lock Bypass (Locksport)", "confidence": "confirmed_hands_on"},
+            ],
+        }
+        job_analysis = {
+            "preferred_skills": ["exposure to cyber and/or physical security systems"],
+            "key_responsibilities": ["manage, maintain, and document physical security"],
+        }
+        scorecard = {"strong_matches": [], "do_not_claim": []}
+        result = sanitize_scorecard(scorecard, profile, job_analysis=job_analysis)
+        # Both phrasings share 2+ words ("physical", "security") - only one
+        # forced entry should result, not one per near-duplicate phrasing.
+        self.assertEqual(len(result["strong_matches"]), 1)
+
+    def test_does_not_force_a_match_without_confirmed_hands_on_confidence(self):
+        profile = {
+            **PROFILE,
+            "skills": PROFILE["skills"] + [
+                {"name": "Physical Security / Lock Bypass (Locksport)", "confidence": "familiarity"},
+            ],
+        }
+        job_analysis = {"key_responsibilities": ["manage, maintain, and document physical security"]}
+        scorecard = {"strong_matches": [], "do_not_claim": []}
+        result = sanitize_scorecard(scorecard, profile, job_analysis=job_analysis)
+        self.assertEqual(result["strong_matches"], [])
+
+    def test_does_not_force_a_match_when_the_model_already_reached_a_verdict(self):
+        # The model DID evaluate this requirement (as a genuine_gap) - the
+        # forcing mechanism must never override a verdict it already made,
+        # even though a confirmed_hands_on item happens to exist too.
+        profile = {
+            **PROFILE,
+            "skills": PROFILE["skills"] + [
+                {"name": "Physical Security / Lock Bypass (Locksport)", "confidence": "confirmed_hands_on"},
+            ],
+        }
+        job_analysis = {"key_responsibilities": ["manage, maintain, and document physical security"]}
+        scorecard = {
+            "strong_matches": [], "do_not_claim": [],
+            "genuine_gaps": [{"skill": "Physical security systems", "impact": "High impact for this role."}],
+        }
+        result = sanitize_scorecard(scorecard, profile, job_analysis=job_analysis)
+        self.assertEqual(result["strong_matches"], [])
+
+    def test_no_job_analysis_skips_the_forcing_mechanism(self):
+        profile = {
+            **PROFILE,
+            "skills": PROFILE["skills"] + [
+                {"name": "Physical Security / Lock Bypass (Locksport)", "confidence": "confirmed_hands_on"},
+            ],
+        }
+        scorecard = {"strong_matches": [], "do_not_claim": []}
+        result = sanitize_scorecard(scorecard, profile, job_analysis=None)
+        self.assertEqual(result["strong_matches"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

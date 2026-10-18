@@ -622,7 +622,85 @@ def _do_not_claim_contradicted_by_profile(item: str, known_names: set[str]) -> b
     return any(item_l in name for name in known_names)
 
 
-def sanitize_scorecard(scorecard: dict, profile: dict, job_match_result: dict | None = None) -> dict:
+def _requirement_already_addressed(req_words: set[str], scorecard: dict) -> bool:
+    """True if any existing scorecard entry - strong/partial/quick-learning/
+    genuine-gap or do_not_claim - already shares 2+ significant words with
+    this requirement, meaning the model DID evaluate it (whatever the
+    verdict). Used to decide whether _force_missing_strong_matches below
+    should even consider a requirement - it only ever adds one the model
+    evaluated NONE of its fields on, never second-guesses a verdict it did
+    reach."""
+    for key in ("strong_matches", "partial_matches", "quick_learning_gaps", "genuine_gaps"):
+        for entry in scorecard.get(key) or []:
+            if isinstance(entry, dict) and entry.get("skill"):
+                if len(req_words & _scorecard_significant_words(entry["skill"])) >= 2:
+                    return True
+    for item in scorecard.get("do_not_claim") or []:
+        if len(req_words & _scorecard_significant_words(item)) >= 2:
+            return True
+    return False
+
+
+def _force_missing_strong_matches(scorecard: dict, job_analysis: dict, profile: dict) -> list[dict]:
+    """Deterministic backstop for a real, observed Scorecard failure mode:
+    even after match_scorecard.md's METHOD was extended to walk
+    "key_responsibilities" (not just "required_skills"/"preferred_skills"),
+    the model has still been seen never once mentioning a job requirement
+    anywhere in its response - not as a strong match, not as a gap, not in
+    do_not_claim - despite the candidate having a confirmed_hands_on skill
+    or achievement that is unambiguously about exactly that requirement
+    (e.g. a dedicated "Physical Security / Lock Bypass" skill and
+    achievement, for a job whose own description names "physical security"
+    as a headline requirement). Since the cover letter is built directly
+    from "strong_matches", a requirement the model silently never evaluated
+    at all never has a chance to reach the user - no amount of re-running
+    guarantees the model will eventually cover it.
+
+    For every item in required_skills/preferred_skills/key_responsibilities
+    that _requirement_already_addressed finds no existing verdict for at
+    all, checks for a confirmed_hands_on skill name or achievement title
+    sharing 2+ significant words with it - the same bar used throughout
+    this module - and forces a strong_matches entry for the match found.
+    Restricted to confirmed_hands_on specifically (the strongest, most
+    conservative confidence tier) since this bypasses the model's own
+    judgement entirely rather than just double-checking it."""
+    candidates = []
+    for s in profile.get("skills", []):
+        if s.get("confidence") == "confirmed_hands_on" and s.get("name"):
+            candidates.append(("Skill", s["name"]))
+    for a in profile.get("achievements", []):
+        if a.get("confidence") == "confirmed_hands_on" and a.get("title"):
+            candidates.append(("Achievement", a["title"]))
+
+    requirement_texts = []
+    for key in ("required_skills", "preferred_skills", "key_responsibilities"):
+        requirement_texts.extend(job_analysis.get(key) or [])
+
+    forced = []
+    claimed_requirement_words: list[set[str]] = []
+    for req_text in requirement_texts:
+        req_words = _scorecard_significant_words(req_text)
+        if len(req_words) < 2:
+            continue
+        if _requirement_already_addressed(req_words, scorecard):
+            continue
+        # Skip a requirement that's just a near-duplicate (2+ word overlap)
+        # of one already forced this pass, so near-identical phrasing for
+        # the same underlying requirement doesn't produce two entries.
+        if any(len(req_words & seen) >= 2 for seen in claimed_requirement_words):
+            continue
+        for kind, name in candidates:
+            name_words = _scorecard_significant_words(name)
+            if len(name_words) >= 2 and len(req_words & name_words) >= 2:
+                forced.append({"skill": req_text, "evidence": f"{kind}: {name}"})
+                claimed_requirement_words.append(req_words)
+                break
+    return forced
+
+
+def sanitize_scorecard(
+    scorecard: dict, profile: dict, job_match_result: dict | None = None, job_analysis: dict | None = None
+) -> dict:
     """Safety net for the (older, separate) Match Scorecard feature -
     match_scorecard.md instructs the model to cite a specific real profile
     item as "evidence" for every strong match, and to never claim a strong
@@ -665,11 +743,20 @@ def sanitize_scorecard(scorecard: dict, profile: dict, job_match_result: dict | 
     not to claim real tools they genuinely have on record (e.g. "F5 WAF",
     "Cisco AMP").
 
-    Finally resolves direct self-contradiction: a skill the model listed in
-    both "strong_matches" and "do_not_claim" - or both "partial_matches" and
+    Resolves direct self-contradiction: a skill the model listed in both
+    "strong_matches" and "do_not_claim" - or both "partial_matches" and
     "do_not_claim" (observed in practice, e.g. "insurance claims
     management" in both at once) - in the same response is kept only in
-    "do_not_claim", the more conservative of the two."""
+    "do_not_claim", the more conservative of the two.
+
+    Finally, when job_analysis is given, forces in any strong_matches entry
+    _force_missing_strong_matches finds for a requirement the model's
+    response never addressed in ANY field - see that function's docstring.
+    This is the one correction in this function that ADDS a verdict rather
+    than correcting or removing one the model already reached; kept
+    deliberately narrow (confirmed_hands_on evidence only, and only for a
+    requirement with zero existing verdict) so it only ever fills a genuine
+    silence, never overrides the model's own judgement call."""
     known_names = _profile_item_names(profile)
     result = dict(scorecard)
     do_not_claim = list(result.get("do_not_claim") or [])
@@ -742,6 +829,14 @@ def sanitize_scorecard(scorecard: dict, profile: dict, job_match_result: dict | 
     # both at once). do_not_claim is the more conservative of the two here
     # as well.
     partial_matches = [m for m in partial_matches if (m.get("skill") or "").lower() not in do_not_claim_lower]
+
+    if job_analysis:
+        kept_strong = kept_strong + _force_missing_strong_matches(
+            {"strong_matches": kept_strong, "partial_matches": partial_matches,
+             "quick_learning_gaps": result.get("quick_learning_gaps"),
+             "genuine_gaps": result.get("genuine_gaps"), "do_not_claim": do_not_claim},
+            job_analysis, profile,
+        )
 
     result["strong_matches"] = kept_strong
     result["partial_matches"] = partial_matches
