@@ -9,6 +9,7 @@ from app.services.matching.evidence import (
     _profile_item_names,
     _resolve_path_citation,
     _sanitize_evidence,
+    _words_match,
     match_evidence,
     match_evidence_llm,
     match_requirement_deterministic,
@@ -210,6 +211,54 @@ class MatchCompoundRequirementTests(unittest.TestCase):
         result = match_requirement_deterministic("Strong expertise across SIEM and EDR platforms", self.profile)
         self.assertIsNotNone(result)
         self.assertEqual(result["evidence_level"], "EXPLICIT")
+
+    def test_real_regression_stemmed_fallback_catches_a_verb_noun_word_form_mismatch(self):
+        # Verbatim shape of a real bug: a job requirement "triage and
+        # investigate alerts" was rated only PARTIAL_EVIDENCE even though
+        # the candidate's own responsibility bullet directly describes
+        # exactly this - "...ongoing analyst duties, including alert
+        # triage and investigation" - because the literal substring search
+        # can't match "investigate alerts" (verb, plural) against
+        # "investigation" (noun, no "alerts" immediately adjacent). Only
+        # "triage" matched on its own, demoting EXPLICIT to INFERRED.
+        profile = {
+            **self.profile,
+            "work_experience": [{
+                "role": "Cyber Security Analyst", "company": "Example Co",
+                "key_responsibilities": [
+                    "Balanced office establishment work with ongoing analyst duties, "
+                    "including alert triage and investigation"
+                ],
+            }],
+        }
+        result = _match_compound_requirement("triage and investigate alerts", profile)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["evidence_level"], "EXPLICIT")
+
+    def test_words_match_direct_cases(self):
+        self.assertTrue(_words_match("investigate", "investigation"))
+        self.assertTrue(_words_match("alert", "alerts"))
+        self.assertTrue(_words_match("manage", "management"))
+
+    def test_words_match_rejects_a_short_word_as_a_prefix_of_an_unrelated_longer_one(self):
+        # "part" is a literal prefix of "particular", but they are not the
+        # same underlying word - the common-prefix bar must be high enough
+        # (6+, or the FULL length of a 5+ character shorter word) to avoid
+        # treating a short, common word as equivalent to anything it
+        # happens to prefix.
+        self.assertFalse(_words_match("part", "particular"))
+        self.assertFalse(_words_match("office", "official"))
+
+    def test_stemmed_fallback_does_not_match_unrelated_words(self):
+        profile = {
+            **self.profile,
+            "work_experience": [{
+                "role": "Analyst", "company": "Example Co",
+                "key_responsibilities": ["Managed office supplies and catering orders"],
+            }],
+        }
+        result = _match_compound_requirement("triage and investigate alerts", profile)
+        self.assertIsNone(result)
 
 
 class EvidenceValidatorTests(unittest.TestCase):

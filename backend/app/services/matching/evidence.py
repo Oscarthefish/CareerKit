@@ -172,6 +172,60 @@ def _extract_candidate_phrases(requirement_name: str) -> list[str]:
     return phrases
 
 
+_STEM_STOPWORDS = {"a", "an", "the", "of", "to", "in", "on", "with", "and", "or", "for", "at"}
+
+
+def _significant_requirement_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-zA-Z]+", text.lower()) if w not in _STEM_STOPWORDS and len(w) > 2}
+
+
+def _words_match(a: str, b: str) -> bool:
+    """True if a and b are the same word, or close enough in shared prefix
+    to be the same underlying word in a different grammatical form (verb
+    vs noun, singular vs plural) - "investigate" vs "investigation",
+    "alert" vs "alerts". Deliberately NOT suffix-stripping each word
+    independently and comparing the results: "investigate" minus a naive
+    "e" suffix and "investigation" minus a naive "ation" suffix land on
+    different-length stems ("investigat" vs "investig") that don't match
+    each other even though the words themselves obviously share a root -
+    comparing the raw shared prefix directly avoids that asymmetry.
+    A shared prefix of 6+ characters is trusted outright; a shorter one
+    (5+) is only trusted when it's the FULL length of the shorter word
+    (i.e. the shorter word is a literal prefix of the longer one, as with
+    "alert"/"alerts") - this keeps a short, common word like "part" from
+    being treated as the same word as "particular"."""
+    if a == b:
+        return True
+    common = 0
+    for ca, cb in zip(a, b):
+        if ca != cb:
+            break
+        common += 1
+    if common >= 6:
+        return True
+    return common >= 5 and common == min(len(a), len(b))
+
+
+def _phrase_words_present(phrase: str, text: str) -> bool:
+    """Looser fallback for a multi-word phrase that fails the exact-
+    substring search in _search: true if EVERY significant word in the
+    phrase has a _words_match in the text, in any order. Tolerates simple
+    morphology and word-order differences - observed in practice: a real
+    responsibility bullet "...ongoing analyst duties, including alert
+    triage and investigation" is unmistakably direct evidence for a
+    requirement phrased "triage and investigate alerts", but the literal
+    substring check never matches "investigate alerts" against "alert ...
+    and investigation" (different word order, verb vs noun, no plural
+    "alerts"). Requiring EVERY word (not just one, and not a word-overlap
+    ratio) keeps this safe against the single-generic-word false positives
+    this codebase has hit before with looser fuzzy matching."""
+    phrase_words = _significant_requirement_words(phrase)
+    if not phrase_words:
+        return False
+    text_words = _significant_requirement_words(text)
+    return all(any(_words_match(pw, tw) for tw in text_words) for pw in phrase_words)
+
+
 def _match_compound_requirement(requirement_name: str, profile: dict) -> Optional[dict]:
     """Fallback for a compound requirement the whole-phrase search can't
     match. Never invents coverage for a part that isn't found: EXPLICIT only
@@ -182,10 +236,15 @@ def _match_compound_requirement(requirement_name: str, profile: dict) -> Optiona
     if len(phrases) < 2:
         return None  # not actually compound - nothing extra to try here
 
+    haystack = _profile_haystack(profile)
     matched_sources: list[str] = []
     unmatched: list[str] = []
     for phrase in phrases:
-        hits = _search(expand_terms(phrase), _profile_haystack(profile))
+        hits = _search(expand_terms(phrase), haystack)
+        if not hits:
+            # Exact substring failed - try the looser, stemmed-word fallback
+            # (see _phrase_words_present) before giving up on this phrase.
+            hits = [label for text, label in haystack if _phrase_words_present(phrase, text)][:5]
         if hits:
             matched_sources.extend(hits)
         else:
