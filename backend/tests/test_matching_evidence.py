@@ -9,6 +9,7 @@ from app.services.matching.evidence import (
     _profile_item_names,
     _resolve_path_citation,
     _sanitize_evidence,
+    _words_match,
     match_evidence,
     match_evidence_llm,
     match_requirement_deterministic,
@@ -210,6 +211,54 @@ class MatchCompoundRequirementTests(unittest.TestCase):
         result = match_requirement_deterministic("Strong expertise across SIEM and EDR platforms", self.profile)
         self.assertIsNotNone(result)
         self.assertEqual(result["evidence_level"], "EXPLICIT")
+
+    def test_real_regression_stemmed_fallback_catches_a_verb_noun_word_form_mismatch(self):
+        # Verbatim shape of a real bug: a job requirement "triage and
+        # investigate alerts" was rated only PARTIAL_EVIDENCE even though
+        # the candidate's own responsibility bullet directly describes
+        # exactly this - "...ongoing analyst duties, including alert
+        # triage and investigation" - because the literal substring search
+        # can't match "investigate alerts" (verb, plural) against
+        # "investigation" (noun, no "alerts" immediately adjacent). Only
+        # "triage" matched on its own, demoting EXPLICIT to INFERRED.
+        profile = {
+            **self.profile,
+            "work_experience": [{
+                "role": "Cyber Security Analyst", "company": "Example Co",
+                "key_responsibilities": [
+                    "Balanced office establishment work with ongoing analyst duties, "
+                    "including alert triage and investigation"
+                ],
+            }],
+        }
+        result = _match_compound_requirement("triage and investigate alerts", profile)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["evidence_level"], "EXPLICIT")
+
+    def test_words_match_direct_cases(self):
+        self.assertTrue(_words_match("investigate", "investigation"))
+        self.assertTrue(_words_match("alert", "alerts"))
+        self.assertTrue(_words_match("manage", "management"))
+
+    def test_words_match_rejects_a_short_word_as_a_prefix_of_an_unrelated_longer_one(self):
+        # "part" is a literal prefix of "particular", but they are not the
+        # same underlying word - the common-prefix bar must be high enough
+        # (6+, or the FULL length of a 5+ character shorter word) to avoid
+        # treating a short, common word as equivalent to anything it
+        # happens to prefix.
+        self.assertFalse(_words_match("part", "particular"))
+        self.assertFalse(_words_match("office", "official"))
+
+    def test_stemmed_fallback_does_not_match_unrelated_words(self):
+        profile = {
+            **self.profile,
+            "work_experience": [{
+                "role": "Analyst", "company": "Example Co",
+                "key_responsibilities": ["Managed office supplies and catering orders"],
+            }],
+        }
+        result = _match_compound_requirement("triage and investigate alerts", profile)
+        self.assertIsNone(result)
 
 
 class EvidenceValidatorTests(unittest.TestCase):
@@ -908,6 +957,54 @@ class SanitizeScorecardTests(unittest.TestCase):
         scorecard = {"strong_matches": [], "do_not_claim": []}
         result = sanitize_scorecard(scorecard, profile, job_analysis=None)
         self.assertEqual(result["strong_matches"], [])
+
+    def test_real_regression_strips_fraud_intelligence_hallucinated_from_the_prompts_own_example(self):
+        # Verbatim shape of the real bug: for a SOC analyst job that never
+        # once mentioned fraud or cloud anything, the model put "Fraud
+        # intelligence" and "Cloud security" in partial_matches, with "gap"
+        # wording that near-verbatim echoes match_scorecard.md's own rule 7
+        # illustrative example text ("has experience in OSINT and threat
+        # research" / "has experience with cloud-managed security
+        # products") - the model echoed its own instructions' example back
+        # as if it were a real finding about this candidate.
+        job_analysis = {
+            "required_skills": ["SOC experience", "SIEM experience", "Microsoft Sentinel"],
+            "preferred_skills": [],
+            "key_responsibilities": ["triage and investigate alerts", "tune detections to cut noise"],
+        }
+        scorecard = {
+            "strong_matches": [{"skill": "SOC experience", "evidence": "Achievement: Led ransomware response"}],
+            "partial_matches": [
+                {"skill": "Cloud security", "gap": "No direct experience in cloud security, but has experience with cloud-managed security products", "evidence": "Work experience: timbre Digital"},
+                {"skill": "Fraud intelligence", "gap": "No direct experience in fraud intelligence, but has experience in OSINT and threat research", "evidence": "Work experience: timbre Digital"},
+            ],
+            "do_not_claim": [],
+        }
+        result = sanitize_scorecard(scorecard, PROFILE, job_analysis=job_analysis)
+        skills_in_partial = [m["skill"] for m in result["partial_matches"]]
+        self.assertNotIn("Cloud security", skills_in_partial)
+        self.assertNotIn("Fraud intelligence", skills_in_partial)
+        # A genuine strong match for a requirement that IS in the job must survive untouched.
+        self.assertEqual(len(result["strong_matches"]), 1)
+
+    def test_leaves_a_prompt_example_phrase_alone_when_the_job_genuinely_asks_for_it(self):
+        job_analysis = {"required_skills": ["Fraud intelligence and investigations expertise"]}
+        scorecard = {
+            "strong_matches": [],
+            "partial_matches": [{"skill": "Fraud intelligence", "gap": "Limited direct experience.", "evidence": "Achievement: Led ransomware response"}],
+            "do_not_claim": [],
+        }
+        result = sanitize_scorecard(scorecard, PROFILE, job_analysis=job_analysis)
+        self.assertEqual(len(result["partial_matches"]), 1)
+
+    def test_prompt_example_contamination_check_is_skipped_without_job_analysis(self):
+        scorecard = {
+            "strong_matches": [],
+            "partial_matches": [{"skill": "Fraud intelligence", "gap": "x", "evidence": "y"}],
+            "do_not_claim": [],
+        }
+        result = sanitize_scorecard(scorecard, PROFILE, job_analysis=None)
+        self.assertEqual(len(result["partial_matches"]), 1)
 
 
 if __name__ == "__main__":
