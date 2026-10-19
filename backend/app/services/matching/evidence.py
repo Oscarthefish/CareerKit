@@ -30,6 +30,7 @@ from typing import Optional
 
 from .synonyms import expand_terms
 from .tenure import match_tenure_requirement
+from .work_rights import match_work_rights_requirement
 
 EVIDENCE_LEVELS = ("EXPLICIT", "INFERRED", "POSSIBLE", "NOT_FOUND")
 
@@ -216,6 +217,10 @@ def match_requirement_deterministic(requirement_name: str, profile: dict) -> Opt
     tenure_match = match_tenure_requirement(requirement_name, profile.get("work_experience", []))
     if tenure_match:
         return tenure_match
+
+    work_rights_match = match_work_rights_requirement(requirement_name, profile.get("personal", {}))
+    if work_rights_match:
+        return work_rights_match
 
     variants = expand_terms(requirement_name)
     if not variants:
@@ -599,6 +604,60 @@ def _fuzzy_requirement_coverage(skill_name: str, requirement_coverage: list[dict
     return best[0] if best else None
 
 
+_SCORECARD_PROMPT_EXAMPLE_PHRASES = (
+    "fraud intelligence", "insurance claims management", "malware reverse engineering",
+    "cloud infrastructure security", "cloud-managed security",
+)
+
+
+def _strip_prompt_example_contamination(scorecard: dict, job_analysis: dict | None) -> None:
+    """Mutates scorecard in place: removes any strong_matches/partial_matches/
+    quick_learning_gaps/genuine_gaps entry whose "skill" matches one of
+    match_scorecard.md's OWN illustrative example phrases (rules 6/7).
+    Observed in practice, for a SOC analyst role whose job description
+    never once mentioned either topic: the model put "Fraud intelligence"
+    and "Cloud security" in partial_matches, with "gap" wording that
+    near-verbatim echoes the prompt's own example text ("has experience in
+    OSINT and threat research" / "has experience with cloud-managed
+    security products") - the model treated its own instructions'
+    illustrative pattern as if it were a real finding about this
+    candidate, rather than guidance for how to handle a genuinely-asked-for
+    domain. Rewording the prompt to warn against this directly did not
+    reliably stop a weak local model from doing it again on a later
+    regeneration, hence this deterministic backstop.
+
+    Requires job_analysis - without it there's no way to tell whether the
+    job genuinely asked for one of these phrases, so this does nothing
+    rather than strip on uncertainty. Checked against job_analysis first
+    and left alone when a requirement genuinely, if rarely, contains one
+    of these exact phrases - this only strips an entry for a phrase that is
+    NOT also a real requirement."""
+    if not isinstance(scorecard, dict) or not job_analysis:
+        return
+    parts = []
+    for key in ("required_skills", "preferred_skills", "key_responsibilities"):
+        parts.extend(job_analysis.get(key) or [])
+    requirement_blob = " ".join(parts).lower()
+
+    for key in ("strong_matches", "partial_matches", "quick_learning_gaps", "genuine_gaps"):
+        kept = []
+        for entry in scorecard.get(key) or []:
+            if not isinstance(entry, dict):
+                kept.append(entry)
+                continue
+            # Check skill/gap/rationale/impact together, not just "skill" -
+            # the model has been observed naming the SKILL as a shortened
+            # paraphrase ("Cloud security") while the telltale verbatim
+            # echo of the prompt's own example wording ("cloud-managed
+            # security products") only shows up in the "gap" text.
+            entry_text = " ".join(str(entry.get(f) or "") for f in ("skill", "gap", "rationale", "impact")).lower()
+            matched_phrases = [p for p in _SCORECARD_PROMPT_EXAMPLE_PHRASES if p in entry_text]
+            if matched_phrases and not any(p in requirement_blob for p in matched_phrases):
+                continue
+            kept.append(entry)
+        scorecard[key] = kept
+
+
 def _confirmed_hands_on_candidates(profile: dict) -> list[tuple[str, str]]:
     """Every (kind, name) pair for a skill name or achievement title at the
     confirmed_hands_on confidence tier - the strongest, most conservative
@@ -854,6 +913,7 @@ def sanitize_scorecard(
     known_names = _profile_item_names(profile)
     confirmed_candidates = _confirmed_hands_on_candidates(profile)
     result = dict(scorecard)
+    _strip_prompt_example_contamination(result, job_analysis)
     do_not_claim = list(result.get("do_not_claim") or [])
 
     kept_strong = []
