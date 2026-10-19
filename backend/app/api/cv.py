@@ -877,14 +877,24 @@ def _normalize_core_capabilities(content: str, tools_lines: list[str]) -> str:
             continue
         m = label_with_colon.match(line) if line.startswith(("#", "*")) else None
         if m:
-            label, rest = m.group(1).strip(), m.group(2).strip()
+            # Strip any stray "**" left INSIDE the captured label - observed
+            # in practice: the model wrote "**Label**:** sentence" (closing
+            # the bold right after the label, then adding an extra,
+            # unmatched "**" right after the colon). The lazy regex above
+            # still parses this correctly as a label line, but its capture
+            # group includes that stray "**" as part of the label text -
+            # left alone, rebuilding the line as "**{label}:**" below would
+            # reproduce the exact same odd, unbalanced "**" count that made
+            # a markdown renderer treat everything after it as bold.
+            label = m.group(1).replace("**", "").strip()
+            rest = m.group(2).replace("**", "").strip()
             groups.append([label, [rest] if rest else []])
             continue
         m2 = label_without_colon.match(line) if line.startswith("#") else None
         if m2:
-            groups.append([m2.group(1).strip(), []])
+            groups.append([m2.group(1).replace("**", "").strip(), []])
             continue
-        content_line = line.lstrip("-").strip()
+        content_line = line.lstrip("-").strip().replace("**", "")
         if content_line and groups:
             groups[-1][1].append(content_line)
 

@@ -226,6 +226,35 @@ class NormalizeCoreCapabilitiesTests(unittest.TestCase):
         # the section boundary now stops at the real heading, not the fake one.
         self.assertIn("SIEM & Investigation: Jira", result.split("## SELECTED TECHNOLOGIES")[1])
 
+    def test_real_regression_strips_a_stray_bold_marker_inside_the_label(self):
+        # Verbatim shape of a real bug: the model closed the bold right
+        # after the label, then added an extra, unmatched "**" right after
+        # the colon - "**Incident Response & Investigation**:** With
+        # extensive experience...". The label-line regex still parses this
+        # fine (it just captures the stray "**" as part of the label
+        # text), but naively rebuilding "**{label}:**" from that captured
+        # text reproduced the same odd, unbalanced "**" count - which made
+        # a markdown renderer treat everything from there onward as bold,
+        # since bold toggles on each "**" and an odd count never closes.
+        content = (
+            "## CORE CAPABILITIES\n"
+            "**Incident Response & Investigation**:** With extensive experience in investigating "
+            "and responding to complex security incidents, I have developed a deep understanding "
+            "of the importance of timely and effective incident response.\n"
+            "**Global SOC Operations**:** Throughout my career, I have worked in a variety of "
+            "global SOC environments.\n"
+            "## SELECTED TECHNOLOGIES\n"
+        )
+        result = _normalize_core_capabilities(content, self.TOOLS_LINES)
+        core_section = result.split("## SELECTED TECHNOLOGIES")[0]
+
+        self.assertNotIn("**:**", core_section)
+        # Exactly 2 "**" per line (one open, one close) - an even total,
+        # so bold never bleeds into anything after this section.
+        self.assertEqual(core_section.count("**") % 2, 0)
+        self.assertIn("**Incident Response & Investigation:** With extensive experience", core_section)
+        self.assertIn("**Global SOC Operations:** Throughout my career", core_section)
+
     def test_two_prose_sentences_in_one_group_join_with_a_space_not_a_comma(self):
         content = (
             "## CORE CAPABILITIES\n"
