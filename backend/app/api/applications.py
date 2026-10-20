@@ -45,7 +45,22 @@ def _company_display(app: JobApplication) -> str:
     return company
 
 
-_SIGN_OFF_PATTERN = re.compile(r"\n(Sincerely|Kind regards|Regards|Yours sincerely|Yours faithfully)\s*,?\s*\n", re.IGNORECASE)
+_SIGN_OFF_PATTERN = re.compile(
+    r"\n(Sincerely|Kind regards|Regards|Yours sincerely|Yours faithfully|Kia ora)\s*,?\s*\n", re.IGNORECASE
+)
+
+
+def _find_sign_off(letter: str):
+    """The LAST sign-off-shaped line in the letter, not the first - "Kia
+    ora" is both a valid opening greeting and a valid NZ-professional
+    closing, so a letter can genuinely contain it twice. A sign-off is, by
+    definition, near the end of the letter; an opening greeting is near
+    the start, so the last match is always the right one to insert content
+    before (an opening "Kia ora," at position 0 doesn't match anyway,
+    since the pattern requires a preceding newline - but relying on that
+    alone would be fragile if the letter were ever indented differently)."""
+    matches = list(_SIGN_OFF_PATTERN.finditer(letter))
+    return matches[-1] if matches else None
 
 
 def _ensure_forced_matches_mentioned(letter: str, scorecard: dict) -> str:
@@ -95,10 +110,87 @@ def _ensure_forced_matches_mentioned(letter: str, scorecard: dict) -> str:
     if not additions:
         return letter
     addition_text = " ".join(additions)
-    sign_off_match = _SIGN_OFF_PATTERN.search(letter)
+    sign_off_match = _find_sign_off(letter)
     if sign_off_match:
         insert_at = sign_off_match.start()
-        return letter[:insert_at].rstrip() + "\n\n" + addition_text + letter[insert_at:]
+        return letter[:insert_at].rstrip() + "\n\n" + addition_text + "\n\n" + letter[insert_at:].lstrip("\n")
+    return letter.rstrip() + "\n\n" + addition_text
+
+
+def _ensure_tool_gap_bridge_mentioned(letter: str, scorecard: dict, profile: dict) -> str:
+    """Safety net: cover_letter.md's structure step 2b asks the model to
+    bridge a named tool/platform gap - the job names a specific SIEM/EDR
+    product the candidate hasn't used, but the candidate has real, direct
+    experience with a different product in the same category, so the
+    letter should say so plainly and pivot to the transferable methodology
+    - but a local model has been observed skipping this entirely even when
+    both the gap and a real alternate plainly exist (confirmed live: a
+    real cover letter for a SOC Analyst role never once mentioned Microsoft
+    Sentinel, CrowdStrike Falcon/NG-SIEM or Rapid7 InsightIDR, despite the
+    Scorecard already correctly flagging all three as gaps against the
+    candidate's real Splunk Enterprise Security / Cortex XDR experience).
+
+    Deterministically groups every Scorecard partial_matches/quick_learning_
+    gaps/genuine_gaps entry that known_category_for recognises as a named
+    product (a small, deliberately incomplete vendor lookup - an
+    unrecognised vendor is never bridged, never guessed at) by category,
+    skips any the letter already substantively mentions, and - only where
+    the candidate has a confirmed_hands_on skill in the SAME category to
+    honestly pivot to - appends one bridging sentence per affected
+    category, inserted before the sign-off."""
+    from ..services.matching.evidence import _scorecard_significant_words
+    from ..services.matching.known_tool_categories import known_category_for
+
+    letter_words = _scorecard_significant_words(letter)
+    gap_skills = [
+        (m.get("skill") or "").strip()
+        for key in ("partial_matches", "quick_learning_gaps", "genuine_gaps")
+        for m in (scorecard or {}).get(key) or []
+        if isinstance(m, dict) and m.get("skill")
+    ]
+
+    by_category: dict[str, list[str]] = {}
+    for gap in gap_skills:
+        category = known_category_for(gap)
+        if not category:
+            continue
+        gap_words = _scorecard_significant_words(gap)
+        if gap_words and len(gap_words & letter_words) >= min(2, len(gap_words)):
+            continue  # already substantively mentioned in the model's own words
+        by_category.setdefault(category, [])
+        if gap not in by_category[category]:
+            by_category[category].append(gap)
+
+    if not by_category:
+        return letter
+
+    real_tool_by_category: dict[str, str] = {}
+    for s in profile.get("skills", []) or []:
+        category = (s.get("tool_category") or "").strip()
+        if (
+            category in by_category and category not in real_tool_by_category
+            and s.get("confidence") == "confirmed_hands_on" and s.get("name")
+        ):
+            real_tool_by_category[category] = s["name"]
+
+    sentences = []
+    for category, gaps in by_category.items():
+        real_tool = real_tool_by_category.get(category)
+        if not real_tool:
+            continue  # no honest alternate to pivot to - say nothing rather than guess
+        gap_list = " or ".join(gaps)
+        sentences.append(
+            f"While I haven't worked directly with {gap_list}, my hands-on experience with "
+            f"{real_tool} has given me the investigative methodology and process to adapt quickly to a different platform."
+        )
+    if not sentences:
+        return letter
+
+    addition_text = " ".join(sentences)
+    sign_off_match = _find_sign_off(letter)
+    if sign_off_match:
+        insert_at = sign_off_match.start()
+        return letter[:insert_at].rstrip() + "\n\n" + addition_text + "\n\n" + letter[insert_at:].lstrip("\n")
     return letter.rstrip() + "\n\n" + addition_text
 
 
@@ -651,7 +743,9 @@ async def generate_cover_letter(app_id: int, db: Session = Depends(get_db)):
         former_employers=former_employer_names(profile),
     ))
     if app.match_scorecard:
-        letter = _ensure_forced_matches_mentioned(letter, json.loads(app.match_scorecard))
+        scorecard = json.loads(app.match_scorecard)
+        letter = _ensure_forced_matches_mentioned(letter, scorecard)
+        letter = _ensure_tool_gap_bridge_mentioned(letter, scorecard, profile)
     app.cover_letter = letter
     db.commit()
     persist_application_files(db, app_id)
