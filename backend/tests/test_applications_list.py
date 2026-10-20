@@ -2,7 +2,12 @@ import json
 import unittest
 from unittest.mock import Mock
 
-from app.api.applications import _ensure_forced_matches_mentioned, _export_download_name, _job_match_summary
+from app.api.applications import (
+    _ensure_forced_matches_mentioned,
+    _ensure_tool_gap_bridge_mentioned,
+    _export_download_name,
+    _job_match_summary,
+)
 
 
 class JobMatchSummaryTests(unittest.TestCase):
@@ -136,6 +141,101 @@ class EnsureForcedMatchesMentionedTests(unittest.TestCase):
     def test_empty_scorecard_returns_letter_unchanged(self):
         letter = "Kia ora,\n\nSome content.\n\nSincerely,\nJason Hill"
         self.assertEqual(_ensure_forced_matches_mentioned(letter, {}), letter)
+
+
+class EnsureToolGapBridgeMentionedTests(unittest.TestCase):
+    def test_real_regression_inserts_before_the_closing_kia_ora_not_the_opening_one(self):
+        # Verbatim shape of a real placement bug: the model used "Kia ora,"
+        # as BOTH the opening greeting and the closing sign-off in the same
+        # letter. The bridge must land before the CLOSING one, not get
+        # appended after the whole letter (including the signature) just
+        # because the opening "Kia ora," isn't the one that matters.
+        letter = (
+            "Kia ora,\n\nI bring over eight years of SOC experience, with hands-on work in "
+            "Splunk Enterprise Security.\n\nI would welcome the chance to discuss this further.\n\n"
+            "Kia ora,\nJason Hill"
+        )
+        scorecard = {"genuine_gaps": [{"skill": "Microsoft Sentinel", "impact": "x"}]}
+        profile = {"skills": [{"name": "Splunk Enterprise Security", "tool_category": "SIEM", "confidence": "confirmed_hands_on"}]}
+        result = _ensure_tool_gap_bridge_mentioned(letter, scorecard, profile)
+        self.assertIn("Microsoft Sentinel", result)
+        # The bridge text must appear BEFORE the final "Jason Hill" line,
+        # not bolted on after the whole signed letter.
+        self.assertLess(result.index("Microsoft Sentinel"), result.rindex("Jason Hill"))
+
+    def test_real_regression_bridges_a_siem_gap_to_the_candidates_real_siem(self):
+        # Verbatim shape of the real bug: a real cover letter for a SOC
+        # Analyst role never once mentioned Microsoft Sentinel, CrowdStrike
+        # Falcon/NG-SIEM or Rapid7 InsightIDR, despite the Scorecard
+        # already correctly flagging all three as gaps against the
+        # candidate's real Splunk Enterprise Security / Cortex XDR
+        # experience.
+        letter = (
+            "Kia ora,\n\nI bring over eight years of SOC experience, with hands-on work in "
+            "Splunk Enterprise Security and Cortex XDR.\n\nSincerely,\nJason Hill"
+        )
+        scorecard = {
+            "partial_matches": [
+                {"skill": "Microsoft Sentinel", "gap": "Limited experience with Sentinel.", "evidence": "x"},
+            ],
+            "genuine_gaps": [
+                {"skill": "Rapid7 InsightIDR", "impact": "High impact."},
+                {"skill": "CrowdStrike Falcon/NG-SIEM", "impact": "High impact."},
+            ],
+        }
+        profile = {
+            "skills": [
+                {"name": "Splunk Enterprise Security", "tool_category": "SIEM", "confidence": "confirmed_hands_on"},
+                {"name": "Palo Alto Cortex XDR", "tool_category": "EDR / XDR", "confidence": "confirmed_hands_on"},
+            ]
+        }
+        result = _ensure_tool_gap_bridge_mentioned(letter, scorecard, profile)
+        self.assertIn("Microsoft Sentinel", result)
+        self.assertIn("Rapid7 InsightIDR", result)
+        self.assertIn("Splunk Enterprise Security", result)
+        self.assertIn("CrowdStrike Falcon/NG-SIEM", result)
+        self.assertIn("Palo Alto Cortex XDR", result)
+        self.assertLess(result.index("Microsoft Sentinel"), result.index("Sincerely"))
+
+    def test_does_not_bridge_an_unrecognised_vendor(self):
+        letter = "Kia ora,\n\nSome content.\n\nSincerely,\nJason Hill"
+        scorecard = {"genuine_gaps": [{"skill": "SomeObscureNicheTool9000", "impact": "x"}]}
+        profile = {"skills": [{"name": "Splunk", "tool_category": "SIEM", "confidence": "confirmed_hands_on"}]}
+        result = _ensure_tool_gap_bridge_mentioned(letter, scorecard, profile)
+        self.assertEqual(result, letter)
+
+    def test_does_not_bridge_without_a_real_alternate_in_the_same_category(self):
+        letter = "Kia ora,\n\nSome content.\n\nSincerely,\nJason Hill"
+        scorecard = {"genuine_gaps": [{"skill": "Microsoft Sentinel", "impact": "x"}]}
+        # Candidate's only tool skill is a different category (EDR, not SIEM).
+        profile = {"skills": [{"name": "Cortex XDR", "tool_category": "EDR / XDR", "confidence": "confirmed_hands_on"}]}
+        result = _ensure_tool_gap_bridge_mentioned(letter, scorecard, profile)
+        self.assertEqual(result, letter)
+
+    def test_does_not_bridge_a_gap_already_substantively_mentioned(self):
+        letter = (
+            "Kia ora,\n\nWhile I haven't used Microsoft Sentinel directly, my Splunk experience "
+            "transfers well.\n\nSincerely,\nJason Hill"
+        )
+        scorecard = {"genuine_gaps": [{"skill": "Microsoft Sentinel", "impact": "x"}]}
+        profile = {"skills": [{"name": "Splunk Enterprise Security", "tool_category": "SIEM", "confidence": "confirmed_hands_on"}]}
+        result = _ensure_tool_gap_bridge_mentioned(letter, scorecard, profile)
+        self.assertEqual(result, letter)
+
+    def test_requires_confirmed_hands_on_confidence_for_the_real_alternate(self):
+        letter = "Kia ora,\n\nSome content.\n\nSincerely,\nJason Hill"
+        scorecard = {"genuine_gaps": [{"skill": "Microsoft Sentinel", "impact": "x"}]}
+        profile = {"skills": [{"name": "Splunk Enterprise Security", "tool_category": "SIEM", "confidence": "familiarity"}]}
+        result = _ensure_tool_gap_bridge_mentioned(letter, scorecard, profile)
+        self.assertEqual(result, letter)
+
+    def test_appends_at_the_end_when_no_sign_off_is_found(self):
+        letter = "Just some body text with no sign-off line at all."
+        scorecard = {"genuine_gaps": [{"skill": "Microsoft Sentinel", "impact": "x"}]}
+        profile = {"skills": [{"name": "Splunk Enterprise Security", "tool_category": "SIEM", "confidence": "confirmed_hands_on"}]}
+        result = _ensure_tool_gap_bridge_mentioned(letter, scorecard, profile)
+        self.assertTrue(result.startswith(letter))
+        self.assertIn("Microsoft Sentinel", result)
 
 
 if __name__ == "__main__":
