@@ -7,7 +7,8 @@ import EmptyState from '@/components/ui/EmptyState'
 import SkeletonBlock from '@/components/ui/Skeleton'
 import JobStatus, { JOB_STATUSES, statusLabel } from '@/components/ui/JobStatus'
 import { MatchChip } from '@/components/ui/MatchIndicator'
-import { JobsIcon } from '@/components/ui/Icons'
+import { JobsIcon, ExternalLinkIcon } from '@/components/ui/Icons'
+import { safeJobHref, jobLinkHost } from '@/components/ui/JobLink'
 import { getApplications, deleteApplication } from '@/lib/api'
 import type { JobApplicationSummary } from '@/lib/types'
 
@@ -103,6 +104,23 @@ export default function ApplicationsPage() {
                     <div className="flex items-center gap-3 text-caption mt-0.5">
                       {app.location && <span>{app.location}</span>}
                       {app.work_type && <span>· {app.work_type}</span>}
+                      {safeJobHref(app.job_url) && <span>·</span>}
+                      {safeJobHref(app.job_url) && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            // The whole row is a <Link>; a nested <a> is invalid HTML,
+                            // so open the listing from a button instead.
+                            e.preventDefault()
+                            e.stopPropagation()
+                            window.open(safeJobHref(app.job_url)!, '_blank', 'noopener,noreferrer')
+                          }}
+                          className="inline-flex items-center gap-1 text-brand-600 hover:underline"
+                          title={app.job_url!}
+                        >
+                          <ExternalLinkIcon width={12} height={12} /> {jobLinkHost(safeJobHref(app.job_url)!)}
+                        </button>
+                      )}
                       <span>· Added {new Date(app.created_at).toLocaleDateString('en-NZ')}</span>
                     </div>
                     {action && <p className="text-xs text-brand-700 font-medium mt-1.5">{action} →</p>}

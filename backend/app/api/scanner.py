@@ -184,6 +184,7 @@ def start_application(job_id: int, db: Session = Depends(get_db)):
         company=job.company,
         role=job.title,
         location=job.location,
+        job_url=job.url or None,
         job_description_raw=description,
         company_research=notes,
         status="draft",

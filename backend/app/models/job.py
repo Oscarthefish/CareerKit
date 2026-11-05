@@ -14,6 +14,7 @@ class JobApplication(Base):
     location = Column(String(200))
     work_type = Column(String(50))  # remote, hybrid, on-site
     salary_range = Column(String(100))
+    job_url = Column(String(1000))  # where the listing was found (job board / careers page)
     job_description_raw = Column(Text)
     job_analysis = Column(Text)       # JSON
     match_scorecard = Column(Text)    # JSON — the original LLM-only fit assessment, unchanged

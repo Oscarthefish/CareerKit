@@ -40,3 +40,6 @@ export const SettingsIcon = (p: IconProps) => (
 export const ChevronLeftIcon = (p: IconProps) => (
   <svg {...base} {...p}><path d="M15 5.5 8.5 12l6.5 6.5" /></svg>
 )
+export const ExternalLinkIcon = (p: IconProps) => (
+  <svg {...base} {...p}><path d="M14 4.5h5.5V10" /><path d="M19.5 4.5 11 13" /><path d="M17.5 13.5v5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1h5" /></svg>
+)

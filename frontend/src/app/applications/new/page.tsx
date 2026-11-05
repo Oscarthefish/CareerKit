@@ -11,7 +11,7 @@ export default function NewApplicationPage() {
   const [step, setStep] = useState<'input' | 'details' | 'analyzing'>('input')
   const [jdText, setJdText] = useState('')
   const [inputMode, setInputMode] = useState<'paste' | 'upload'>('paste')
-  const [details, setDetails] = useState({ company: '', role: '', recruiter_name: '', location: '', work_type: '', salary_range: '' })
+  const [details, setDetails] = useState({ company: '', role: '', recruiter_name: '', location: '', work_type: '', salary_range: '', job_url: '' })
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -178,6 +178,11 @@ export default function NewApplicationPage() {
                   <label className="label">Salary Range</label>
                   <input className="input" value={details.salary_range} onChange={set('salary_range')} placeholder="$90k-$110k" />
                 </div>
+              </div>
+              <div>
+                <label className="label">Job Link</label>
+                <input className="input" type="url" value={details.job_url} onChange={set('job_url')} placeholder="https://www.seek.co.nz/job/..." />
+                <p className="text-xs text-gray-400 mt-1">Where you found the listing, so you can get back to it.</p>
               </div>
             </div>
 
