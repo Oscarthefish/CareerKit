@@ -26,6 +26,9 @@ from ..ai.language import to_british
 from ..parsers.router import extract_text, SUPPORTED_EXTENSIONS
 from ..exporters import markdown_exporter, docx_exporter, pdf_exporter
 from ..storage.file_storage import get_application_folder
+from ..services.matching.grounding import (
+    grounded_analysis, grounded_scorecard, ground_job_analysis, ground_scorecard, ground_requirements,
+)
 
 router = APIRouter(prefix="/api/applications", tags=["applications"])
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -239,8 +242,8 @@ def _serialize(app: JobApplication) -> dict:
         "applied_date": app.applied_date,
         "session_folder": app.session_folder,
         "job_description_raw": app.job_description_raw,
-        "job_analysis": json.loads(app.job_analysis) if app.job_analysis else None,
-        "match_scorecard": json.loads(app.match_scorecard) if app.match_scorecard else None,
+        "job_analysis": grounded_analysis(app) if app.job_analysis else None,
+        "match_scorecard": grounded_scorecard(app) if app.match_scorecard else None,
         "job_match_result": json.loads(app.job_match_result) if app.job_match_result else None,
         "cover_letter": app.cover_letter,
         "cv_adjustment_notes": app.cv_adjustment_notes,
@@ -439,6 +442,7 @@ async def analyze_job(app_id: int, db: Session = Depends(get_db)):
     provider = get_provider()
     analysis = await provider.generate_json(prompt)
 
+    analysis = ground_job_analysis(analysis, app.job_description_raw)
     app.job_analysis = json.dumps(analysis)
     if not app.company and analysis.get("company"):
         app.company = analysis["company"]
@@ -472,7 +476,7 @@ async def generate_scorecard(app_id: int, db: Session = Depends(get_db)):
     prompt = fill_prompt(
         "match_scorecard",
         PROFILE_SUMMARY=json.dumps(profile, indent=2),
-        JOB_ANALYSIS=app.job_analysis,
+        JOB_ANALYSIS=json.dumps(grounded_analysis(app)),
     )
     provider = get_provider()
     try:
@@ -488,8 +492,9 @@ async def generate_scorecard(app_id: int, db: Session = Depends(get_db)):
         )
     from ..services.matching.evidence import sanitize_scorecard
     job_match_result = json.loads(app.job_match_result) if app.job_match_result else None
-    job_analysis = json.loads(app.job_analysis) if app.job_analysis else None
+    job_analysis = grounded_analysis(app) if app.job_analysis else None
     scorecard = sanitize_scorecard(scorecard, profile, job_match_result=job_match_result, job_analysis=job_analysis)
+    scorecard = ground_scorecard(scorecard, app.job_description_raw)
     app.match_scorecard = json.dumps(scorecard)
     db.commit()
     persist_application_files(db, app_id)
@@ -519,7 +524,7 @@ async def generate_job_match(app_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Run job analysis first.")
 
     provider = get_provider()
-    analysis = json.loads(app.job_analysis)
+    analysis = grounded_analysis(app)
 
     # Requirement extraction is cached on the application: re-analysing a JD
     # you've already broken down costs an LLM call for no benefit.
@@ -528,7 +533,10 @@ async def generate_job_match(app_id: int, db: Session = Depends(get_db)):
             requirements = json.loads(app.job_requirements)
         else:
             requirements = await extract_requirements(provider, analysis, app.job_description_raw or "")
-            app.job_requirements = json.dumps(requirements)
+        # Drop any requirement the advert never states (model contamination
+        # from prompt examples) - also re-applied to cached extractions.
+        requirements = ground_requirements(requirements, app.job_description_raw)
+        app.job_requirements = json.dumps(requirements)
 
         profile = build_profile_summary(db, mode="full")
         compact = compact_profile_for_prompt(profile)
@@ -752,8 +760,8 @@ async def generate_cover_letter(app_id: int, db: Session = Depends(get_db)):
     prompt = fill_prompt(
         "cover_letter",
         PROFILE_SUMMARY=json.dumps(profile, indent=2),
-        JOB_ANALYSIS=app.job_analysis,
-        MATCH_SCORECARD=app.match_scorecard or "{}",
+        JOB_ANALYSIS=json.dumps(grounded_analysis(app)),
+        MATCH_SCORECARD=json.dumps(grounded_scorecard(app) or {}),
         RECRUITER_NAME=app.recruiter_name or "Hiring Manager",
         COMPANY_NAME=_company_display(app),
         ROLE_TITLE=app.role or "the role",
@@ -768,7 +776,7 @@ async def generate_cover_letter(app_id: int, db: Session = Depends(get_db)):
         former_employers=former_employer_names(profile),
     ))
     if app.match_scorecard:
-        scorecard = json.loads(app.match_scorecard)
+        scorecard = grounded_scorecard(app)
         letter = _ensure_forced_matches_mentioned(letter, scorecard)
         letter = _ensure_tool_gap_bridge_mentioned(letter, scorecard, profile)
     app.cover_letter = letter
@@ -791,8 +799,8 @@ async def generate_cv_notes(app_id: int, db: Session = Depends(get_db)):
 
     profile = build_profile_summary(db)
     banned = get_banned_phrases_instruction(db)
-    analysis = json.loads(app.job_analysis)
-    scorecard = json.loads(app.match_scorecard)
+    analysis = grounded_analysis(app)
+    scorecard = grounded_scorecard(app)
 
     prompt = f"""You are a CV advisor helping a New Zealand cyber security professional tailor their CV for a specific role.
 
@@ -843,8 +851,8 @@ async def generate_interview_prep(app_id: int, db: Session = Depends(get_db)):
     banned = get_banned_phrases_instruction(db)
     common = dict(
         PROFILE_SUMMARY=json.dumps(profile, indent=2),
-        JOB_ANALYSIS=app.job_analysis,
-        MATCH_SCORECARD=app.match_scorecard or "{}",
+        JOB_ANALYSIS=json.dumps(grounded_analysis(app)),
+        MATCH_SCORECARD=json.dumps(grounded_scorecard(app) or {}),
         BANNED_PHRASES=banned,
     )
     provider = get_provider()
@@ -887,8 +895,8 @@ async def generate_linkedin_angle(app_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Run job analysis first.")
 
     banned = get_banned_phrases_instruction(db)
-    analysis = json.loads(app.job_analysis)
-    scorecard = json.loads(app.match_scorecard) if app.match_scorecard else {}
+    analysis = grounded_analysis(app)
+    scorecard = grounded_scorecard(app) if app.match_scorecard else {}
 
     prompt = f"""You are helping a cyber security professional position themselves on LinkedIn for a specific role.
 
@@ -930,7 +938,7 @@ async def generate_tailored_cv(app_id: int, db: Session = Depends(get_db)):
 
     profile = build_profile_summary(db)
     banned = get_banned_phrases_instruction(db)
-    job_analysis = app.job_analysis or "{}"
+    job_analysis = json.dumps(grounded_analysis(app) or {})
     prompt = fill_prompt(
         "tailored_cv",
         MASTER_CV=master.content_markdown,
@@ -992,7 +1000,7 @@ def export_application(app_id: int, fmt: str, section: str = "cover-letter", db:
         "tailored-cv": app.tailored_cv,
         "custom-cv": app.custom_cv,
         "linkedin": app.linkedin_angle,
-        "scorecard": json.dumps(json.loads(app.match_scorecard), indent=2) if app.match_scorecard else None,
+        "scorecard": json.dumps(grounded_scorecard(app), indent=2) if app.match_scorecard else None,
     }
     content = content_map.get(section)
     if not content:
