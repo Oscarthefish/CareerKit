@@ -5,6 +5,7 @@ from ..models.job import JobApplication
 from ..storage.file_storage import (
     get_application_folder, save_application_file, save_application_json
 )
+from .matching.grounding import grounded_analysis, grounded_scorecard
 
 
 def persist_application_files(db: Session, app_id: int) -> None:
@@ -21,13 +22,13 @@ def persist_application_files(db: Session, app_id: int) -> None:
         save_application_file(folder, "01-job-description.md", app.job_description_raw)
 
     if app.job_analysis:
-        analysis = json.loads(app.job_analysis)
+        analysis = grounded_analysis(app)
         md = _dict_to_md("Job Analysis", analysis)
         save_application_file(folder, "02-job-analysis.md", md)
         save_application_json(folder, "job-analysis.json", analysis)
 
     if app.match_scorecard:
-        scorecard = json.loads(app.match_scorecard)
+        scorecard = grounded_scorecard(app)
         md = _dict_to_md("Match Scorecard", scorecard)
         save_application_file(folder, "03-match-scorecard.md", md)
         save_application_json(folder, "match-scorecard.json", scorecard)
