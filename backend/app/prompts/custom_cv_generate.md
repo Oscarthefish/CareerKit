@@ -86,10 +86,7 @@ Each achievement record has a short "title" plus fuller "situation" / "action" /
 If the candidate profile's "projects" list is empty, omit this section entirely.
 
 ## CERTIFICATIONS & TRAINING
-Certification display_line | Certification display_line
-Relevant training: training display_line; training display_line
-
-List every certification's display_line verbatim, separated by " | ", as one paragraph (let it wrap naturally - do not add your own line breaks within it). On the line directly below, if there is any training data, write "Relevant training:" followed by every training entry's display_line, separated by "; ". Omit the certifications line entirely if there are none; omit the "Relevant training:" line entirely if there is no training data; omit this whole section if both are empty.
+(Write this heading only, with nothing under it. CareerKit fills it in from the structured certification and training records - grouped into Certifications, Professional Training and Currently Studying - so it is always exact.)
 
 ## ADDITIONAL BACKGROUND
 One short paragraph of plain prose covering, where the data has them: (a) any work_experience role NOT included in PROFESSIONAL EXPERIENCE above because it had no description or key_responsibilities - name the role, company and date range for each; (b) education - name each qualification, institution and year. For example: "Earlier roles: IT Team Leader, Momentum Worldwide (Nov 2008 - Sep 2011); Desktop Support, Interpublic Group (Jul 2007 - Nov 2008). Education: Advanced PC Servicing Diploma, Massey University (2000)." Omit the "Earlier roles:" part if every role in the data had real content and was already included above; omit the "Education:" part if there is no education data; omit this whole section if there's nothing for either part.
@@ -105,7 +102,7 @@ Rules:
 - Do not invent experience, dates, employers, tools, certifications or outcomes
 - Omit any section for which there is no data
 - Never write a placeholder value anywhere on the CV (e.g. "(Unknown)", "(N/A)", "(not specified)", "TBC")
-- Use each certification and training item's display_line verbatim; never move an item between sections and never list the same item under two headings
+- Certifications and training are filled in automatically under CERTIFICATIONS & TRAINING - do not list them anywhere else; never list the same item under two headings
 - If the candidate profile includes a "community_involvement" list, include a COMMUNITY INVOLVEMENT section for it. If empty, omit the section entirely.
 
 Candidate Profile (already selected and prioritised for this vacancy):

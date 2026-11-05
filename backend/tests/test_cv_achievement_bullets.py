@@ -6,7 +6,6 @@ from app.api.cv import (
     _enrich_achievement_bullets,
     _ensure_all_achievements_present,
     _ensure_all_roles_present,
-    _force_correct_certifications,
     _force_correct_domains_line,
     _force_correct_leadership_line,
     _force_correct_ops_skills_line,
@@ -429,34 +428,6 @@ class MergeKeySkillsContinuationsTests(unittest.TestCase):
     def test_leaves_content_unchanged_when_no_continuation_present(self):
         content = "## KEY SKILLS\n**Security Operations:** Incident Response\n\n## PROFESSIONAL EXPERIENCE\n- x\n"
         self.assertEqual(_merge_key_skills_continuations(content), content)
-
-
-class ForceCorrectCertificationsTests(unittest.TestCase):
-    def test_fixes_a_mistyped_certification_abbreviation(self):
-        certifications = [{"display_line": "Practical Junior OSINT Researcher (PJOR), TCM Security, 2024"}]
-        content = "# Alex Example\n\n## CERTIFICATIONS\n- Practical Junior OSINT Researcher (PJR), TCM Security, 2024\n\n## EDUCATION\n- x\n"
-        result = _force_correct_certifications(content, certifications)
-        self.assertIn("(PJOR)", result)
-        self.assertNotIn("(PJR)", result)
-
-    def test_replaces_whole_section_with_all_display_lines_in_order(self):
-        certifications = [
-            {"display_line": "First Cert, Issuer, 2020"},
-            {"display_line": "Second Cert, Issuer, 2021 (In Progress)"},
-        ]
-        content = "# Alex Example\n\n## CERTIFICATIONS\n- Something wrong\n\n## EDUCATION\n- x\n"
-        result = _force_correct_certifications(content, certifications)
-        self.assertIn("- First Cert, Issuer, 2020\n- Second Cert, Issuer, 2021 (In Progress)", result)
-        self.assertNotIn("Something wrong", result)
-
-    def test_no_certifications_section_does_not_crash(self):
-        content = "# Alex Example\n\n## EDUCATION\n- x\n"
-        result = _force_correct_certifications(content, [{"display_line": "First Cert, Issuer, 2020"}])
-        self.assertEqual(result, content)
-
-    def test_no_certifications_data_leaves_content_unchanged(self):
-        content = "# Alex Example\n\n## CERTIFICATIONS\n- Something\n\n## EDUCATION\n- x\n"
-        self.assertEqual(_force_correct_certifications(content, []), content)
 
 
 class ForceCorrectOpsSkillsLineTests(unittest.TestCase):

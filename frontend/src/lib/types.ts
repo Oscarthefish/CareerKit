@@ -576,3 +576,22 @@ export interface RecruiterReadinessScore {
     shortlisting_readiness: number
   }
 }
+
+export interface CVFit {
+  pages: number
+  target_pages: number | null
+  fits: boolean
+  spacing: 'standard' | 'compact'
+  tightened: boolean
+  last_page_fill: number
+  compact_pages: number | null
+  notice: string | null
+  suggestions: string[]
+}
+
+export interface CVLayoutResult {
+  markdown: string
+  sections: string[]
+  fit: CVFit
+  options: { target: string; spacing: string }
+}

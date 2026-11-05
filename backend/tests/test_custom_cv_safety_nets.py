@@ -3,7 +3,6 @@ import unittest
 from app.api.cv import (
     _ensure_two_paragraph_profile,
     _force_additional_background,
-    _force_certifications_and_training,
     _force_selected_technologies,
     _non_dataless_roles,
     _normalize_core_capabilities,
@@ -302,37 +301,6 @@ class ForceSelectedTechnologiesTests(unittest.TestCase):
     def test_leaves_content_unchanged_when_no_tools(self):
         content = "## PROFESSIONAL EXPERIENCE\n### Role | Co\n"
         self.assertEqual(_force_selected_technologies(content, []), content)
-
-
-class ForceCertificationsAndTrainingTests(unittest.TestCase):
-    def test_builds_both_lines(self):
-        content = "## PROFESSIONAL EXPERIENCE\n### Role | Co\n- Did things\n## COMMUNITY INVOLVEMENT\n"
-        certs = [{"display_line": "GCIH, GIAC (2022)"}, {"display_line": "Security+, CompTIA (2020)"}]
-        training = [{"display_line": "Splunk Fundamentals, Splunk (2021)"}]
-        result = _force_certifications_and_training(content, certs, training)
-        self.assertIn("## CERTIFICATIONS & TRAINING", result)
-        self.assertIn("GCIH, GIAC (2022) | Security+, CompTIA (2020)", result)
-        self.assertIn("Relevant training: Splunk Fundamentals, Splunk (2021)", result)
-
-    def test_omits_training_line_when_no_training(self):
-        content = "## PROFESSIONAL EXPERIENCE\n### Role | Co\n"
-        result = _force_certifications_and_training(content, [{"display_line": "GCIH, GIAC (2022)"}], [])
-        self.assertIn("GCIH, GIAC (2022)", result)
-        self.assertNotIn("Relevant training", result)
-
-    def test_replaces_existing_wrong_section_body(self):
-        content = (
-            "## PROFESSIONAL EXPERIENCE\n### Role | Co\n"
-            "## CERTIFICATIONS & TRAINING\nGCIH (PJR)\n"
-            "## COMMUNITY INVOLVEMENT\n"
-        )
-        result = _force_certifications_and_training(content, [{"display_line": "GCIH, GIAC (2022)"}], [])
-        self.assertIn("GCIH, GIAC (2022)", result)
-        self.assertNotIn("GCIH (PJR)", result)
-
-    def test_leaves_content_unchanged_when_nothing_to_show(self):
-        content = "## PROFESSIONAL EXPERIENCE\n### Role | Co\n"
-        self.assertEqual(_force_certifications_and_training(content, [], []), content)
 
 
 class ForceAdditionalBackgroundTests(unittest.TestCase):
