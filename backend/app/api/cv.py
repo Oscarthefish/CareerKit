@@ -11,6 +11,9 @@ from ..services.prompt_service import fill_prompt
 from ..ai.provider_factory import get_provider
 from ..exporters import markdown_exporter, docx_exporter, pdf_exporter
 from ..storage.file_storage import get_exports_dir
+from ..services.cv_layout import service as cv_layout
+from ..services.cv_layout.normalize import normalize_structure, replace_credentials_section
+from ..services.cv_layout.options import LayoutOptions, TARGET_UNRESTRICTED
 
 router = APIRouter(prefix="/api/cv", tags=["cv"])
 
@@ -26,24 +29,6 @@ def _strip_trailing_line_commas(content: str) -> str:
     short with a dangling trailing comma right before the line break -
     cosmetic, but never correct in any line on this CV, so just strip it."""
     return re.sub(r",[ \t]*\n", "\n", content)
-
-
-def _force_correct_certifications(content: str, certifications: list[dict]) -> str:
-    """Safety net: cv_generation.md instructs every certification to use its
-    "display_line" field verbatim - already exactly worded and correct - but
-    the model has repeatedly retyped the abbreviation for one particular
-    certification wrong anyway (e.g. "Practical Junior OSINT Researcher
-    (PJOR)" typed out as "(PJR)"). Rather than chase that one recurring typo,
-    force the whole section to the verbatim display_line list, the same way
-    Platforms & Tools is force-corrected above."""
-    lines = [c.get("display_line") for c in certifications if c.get("display_line")]
-    if not lines:
-        return content
-    correct_block = "\n".join(f"- {l}" for l in lines)
-    pattern = re.compile(r"(^## CERTIFICATIONS\s*\n)(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
-    if not pattern.search(content):
-        return content
-    return pattern.sub(lambda m: m.group(1) + correct_block + "\n", content, count=1)
 
 
 _DOMAIN_SKILL_NAMES = {
@@ -958,40 +943,6 @@ def _force_selected_technologies(content: str, tools_lines: list[str]) -> str:
     return content.replace(sentinel, correct_block, 1)
 
 
-def _force_certifications_and_training(content: str, certifications: list[dict], training: list[dict]) -> str:
-    """Safety net: custom_cv_generate.md merges certifications and training
-    into one "## CERTIFICATIONS & TRAINING" section (unlike the Master CV's
-    separate "## CERTIFICATIONS" heading) - a pipe-separated certifications
-    line, plus a "Relevant training:" line underneath when there's any
-    training data. Force both to the verbatim display_line values, the same
-    verbatim-force-copy discipline _force_correct_certifications uses for the
-    Master CV, rather than trust free retyping of either list."""
-    cert_lines = [c.get("display_line") for c in certifications if c.get("display_line")]
-    training_lines = [t.get("display_line") for t in training if t.get("display_line")]
-    if not cert_lines and not training_lines:
-        return content
-
-    body_parts = []
-    if cert_lines:
-        body_parts.append(" | ".join(cert_lines))
-    if training_lines:
-        body_parts.append("Relevant training: " + "; ".join(training_lines))
-    correct_block = "\n".join(body_parts)
-
-    pattern = re.compile(r"(^## CERTIFICATIONS & TRAINING\s*\n)(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
-    if pattern.search(content):
-        return pattern.sub(lambda m: m.group(1) + correct_block + "\n", content, count=1)
-
-    # Missing entirely - insert directly after PROFESSIONAL EXPERIENCE, which
-    # is always present, rather than lose the section.
-    exp_pattern = re.compile(r"(^## PROFESSIONAL EXPERIENCE\s*\n)(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
-    exp_match = exp_pattern.search(content)
-    new_section = f"## CERTIFICATIONS & TRAINING\n{correct_block}\n"
-    if exp_match:
-        return content[:exp_match.end(2)] + "\n" + new_section + content[exp_match.end(2):]
-    return content.rstrip("\n") + "\n\n" + new_section
-
-
 def _force_additional_background(content: str, work_experience: list[dict], education: list[dict]) -> str:
     """Safety net: custom_cv_generate.md compresses any dataless role (no
     description, no key_responsibilities - already excluded from
@@ -1111,9 +1062,9 @@ def apply_cv_safety_nets(content: str, profile: dict, jd_terminology: list[str] 
     content = _enrich_achievement_bullets(content, profile.get("achievements", []))
     content = _ensure_all_achievements_present(content, profile.get("achievements", []))
     content = _dedupe_achievement_bullets(content, profile.get("achievements", []))
-    content = _force_correct_certifications(content, profile.get("certifications", []))
+    content = replace_credentials_section(content, profile.get("certifications", []), profile.get("training", []))
     content = _ensure_community_involvement_present(content, profile.get("community_involvement", []))
-    return content
+    return normalize_structure(content)
 
 
 def apply_custom_cv_safety_nets(content: str, profile: dict, jd_terminology: list[str] | None = None) -> str:
@@ -1145,10 +1096,10 @@ def apply_custom_cv_safety_nets(content: str, profile: dict, jd_terminology: lis
     content = _enrich_achievement_bullets(content, profile.get("achievements", []))
     content = _ensure_all_achievements_present(content, profile.get("achievements", []))
     content = _dedupe_achievement_bullets(content, profile.get("achievements", []))
-    content = _force_certifications_and_training(content, profile.get("certifications", []), profile.get("training", []))
+    content = replace_credentials_section(content, profile.get("certifications", []), profile.get("training", []))
     content = _force_additional_background(content, profile.get("work_experience", []), profile.get("education", []))
     content = _ensure_community_involvement_present(content, profile.get("community_involvement", []))
-    return content
+    return normalize_structure(content)
 
 
 @router.get("/current")
@@ -1159,7 +1110,7 @@ def get_current_cv(db: Session = Depends(get_db)):
     return {
         "id": row.id,
         "version_name": row.version_name,
-        "content_markdown": row.content_markdown,
+        "content_markdown": cv_layout.normalize_for_display(db, row.content_markdown),
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
@@ -1185,7 +1136,7 @@ def get_cv_version(version_id: int, db: Session = Depends(get_db)):
     return {
         "id": row.id,
         "version_name": row.version_name,
-        "content_markdown": row.content_markdown,
+        "content_markdown": cv_layout.normalize_for_display(db, row.content_markdown),
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
@@ -1300,27 +1251,46 @@ def ats_health_check(db: Session = Depends(get_db)):
     return result
 
 
+class LayoutRequest(BaseModel):
+    markdown: str
+    target: str | None = None
+    spacing: str | None = None
+    order: str | None = None   # section headings joined with "||"
+    hide: str | None = None
+
+
+@router.post("/layout")
+def cv_layout_check(body: LayoutRequest, db: Session = Depends(get_db)):
+    """The CV exactly as it will be laid out (structure normalised, section
+    order/inclusion applied) plus its real rendered page count, any overflow
+    notice and review-only cut suggestions. Used by every CV preview, so the
+    preview and the exports can't disagree."""
+    options = LayoutOptions.from_params(body.target, body.spacing, body.order, body.hide)
+    prepared, fit, sections = cv_layout.layout(db, body.markdown, options)
+    return {"markdown": prepared, "sections": sections, "fit": fit.to_dict(),
+            "options": {"target": options.target, "spacing": options.spacing}}
+
+
+def layout_file_response(path, filename: str, media_type: str, inline: bool) -> FileResponse:
+    return FileResponse(str(path), filename=filename, media_type=media_type,
+                        content_disposition_type="inline" if inline else "attachment")
+
+
+MEDIA_TYPES = {
+    "md": "text/markdown",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pdf": "application/pdf",
+}
+
+
 @router.get("/export/{fmt}")
-def export_cv(fmt: str, db: Session = Depends(get_db)):
+def export_cv(fmt: str, target: str | None = None, spacing: str | None = None, order: str | None = None,
+              hide: str | None = None, inline: bool = False, db: Session = Depends(get_db)):
     latest = db.query(CVVersion).order_by(CVVersion.id.desc()).first()
     if not latest or not latest.content_markdown:
         raise HTTPException(status_code=400, detail="No CV to export.")
-
-    exports_dir = get_exports_dir()
-    content = latest.content_markdown
-
-    if fmt == "md":
-        path = markdown_exporter.export(content, exports_dir / "master-cv.md")
-        return FileResponse(str(path), filename="master-cv.md", media_type="text/markdown")
-    elif fmt == "docx":
-        path = docx_exporter.export(content, exports_dir / "master-cv.docx")
-        return FileResponse(
-            str(path),
-            filename="master-cv.docx",
-            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
-    elif fmt == "pdf":
-        path = pdf_exporter.export(content, exports_dir / "master-cv.pdf")
-        return FileResponse(str(path), filename="master-cv.pdf", media_type="application/pdf")
-    else:
+    if fmt not in MEDIA_TYPES:
         raise HTTPException(status_code=400, detail=f"Unsupported format: {fmt}. Use md, docx, or pdf.")
+    options = LayoutOptions.from_params(target, spacing, order, hide, default_target=TARGET_UNRESTRICTED)
+    path, _ = cv_layout.export(db, latest.content_markdown, fmt, get_exports_dir() / f"master-cv.{fmt}", options)
+    return layout_file_response(path, f"master-cv.{fmt}", MEDIA_TYPES[fmt], inline)

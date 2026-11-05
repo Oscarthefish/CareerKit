@@ -6,7 +6,7 @@ import AppShell from '@/components/AppShell'
 import AIButton from '@/components/AIButton'
 import FileUpload from '@/components/FileUpload'
 import BannedPhrasesWidget from '@/components/BannedPhrasesWidget'
-import CVRenderer from '@/components/CVRenderer'
+import CVLayoutPanel from '@/components/CVLayoutPanel'
 import EvidenceFeedbackWidget from '@/components/EvidenceFeedbackWidget'
 import Tabs from '@/components/ui/Tabs'
 import SectionHeader from '@/components/ui/SectionHeader'
@@ -714,12 +714,6 @@ function CustomCvPanel({
                 </p>
               )}
             </div>
-            <div className="flex gap-2">
-              {!editing && <button onClick={startEditing} className="btn-ghost btn-sm">Edit</button>}
-              <a href={exportApplication(appId, 'md', 'custom-cv')} download className="btn-ghost btn-sm">MD</a>
-              <a href={exportApplication(appId, 'docx', 'custom-cv')} download className="btn-ghost btn-sm">DOCX</a>
-              <a href={exportApplication(appId, 'pdf', 'custom-cv')} download className="btn-ghost btn-sm">PDF</a>
-            </div>
           </div>
           {editing ? (
             <div className="space-y-3">
@@ -741,7 +735,13 @@ function CustomCvPanel({
               </div>
             </div>
           ) : (
-            <CVRenderer markdown={cvResult.custom_cv} />
+            <CVLayoutPanel
+              markdown={cvResult.custom_cv}
+              storageKey="application-cv"
+              defaultTarget="two_page"
+              exportUrl={(fmt, params) => exportApplication(appId, fmt, 'custom-cv', params)}
+              actions={<button onClick={startEditing} className="btn-ghost btn-sm">Edit</button>}
+            />
           )}
         </div>
       )}
@@ -1050,9 +1050,6 @@ function TabCVNotes({ app, refresh, appId }: { app: JobApplication; refresh: () 
                   {showTailored ? 'Hide' : 'View'}
                 </button>
                 <button onClick={() => { setTailoredValue(app.tailored_cv || ''); setEditingTailored(true); setShowTailored(true) }} className="btn-secondary btn-sm">Edit</button>
-                <a href={exportApplication(appId, 'md', 'tailored-cv')} download className="btn-ghost btn-sm">MD</a>
-                <a href={exportApplication(appId, 'docx', 'tailored-cv')} download className="btn-ghost btn-sm">DOCX</a>
-                <a href={exportApplication(appId, 'pdf', 'tailored-cv')} download className="btn-ghost btn-sm">PDF</a>
               </>
             )}
             <AIButton
@@ -1079,7 +1076,12 @@ function TabCVNotes({ app, refresh, appId }: { app: JobApplication; refresh: () 
         )}
         {showTailored && !editingTailored && app.tailored_cv && (
           <div className="p-4 border-t border-gray-100">
-            <CVRenderer markdown={app.tailored_cv} />
+            <CVLayoutPanel
+              markdown={app.tailored_cv}
+              storageKey="application-cv"
+              defaultTarget="two_page"
+              exportUrl={(fmt, params) => exportApplication(appId, fmt, 'tailored-cv', params)}
+            />
           </div>
         )}
       </div>

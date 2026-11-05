@@ -152,7 +152,41 @@ export const saveCV = (data: object) =>
   request('/api/cv/save', { method: 'POST', body: JSON.stringify(data) })
 export const brutalReview = () => request('/api/cv/review', { method: 'POST' })
 export const checkATSHealth = () => request('/api/cv/ats-check', { method: 'POST' })
-export const exportCV = (fmt: string) => `${API_BASE}/api/cv/export/${fmt}`
+// Layout options shared by every CV preview and export (see CVLayoutPanel).
+export interface CVLayoutParams {
+  target?: 'two_page' | 'unrestricted'
+  spacing?: 'standard' | 'compact'
+  order?: string[]
+  hide?: string[]
+  inline?: boolean
+}
+
+export function layoutQuery(p: CVLayoutParams = {}): string {
+  const q = new URLSearchParams()
+  if (p.target) q.set('target', p.target)
+  if (p.spacing) q.set('spacing', p.spacing)
+  if (p.order?.length) q.set('order', p.order.join('||'))
+  if (p.hide?.length) q.set('hide', p.hide.join('||'))
+  if (p.inline) q.set('inline', 'true')
+  return q.toString()
+}
+
+export const exportCV = (fmt: string, p?: CVLayoutParams) => {
+  const q = layoutQuery(p)
+  return `${API_BASE}/api/cv/export/${fmt}${q ? `?${q}` : ''}`
+}
+
+export const cvLayout = (markdown: string, p: CVLayoutParams) =>
+  request<import('./types').CVLayoutResult>('/api/cv/layout', {
+    method: 'POST',
+    body: JSON.stringify({
+      markdown,
+      target: p.target,
+      spacing: p.spacing,
+      order: p.order?.join('||') || null,
+      hide: p.hide?.join('||') || null,
+    }),
+  })
 
 // Examples
 export const getExamples = () => request('/api/examples')
@@ -211,8 +245,10 @@ export const generateLinkedInAngle = (id: number) =>
   request(`/api/applications/${id}/linkedin`, { method: 'POST' })
 export const generateTailoredCV = (id: number) =>
   request(`/api/applications/${id}/tailored-cv`, { method: 'POST' })
-export const exportApplication = (id: number, fmt: string, section: string) =>
-  `${API_BASE}/api/applications/${id}/export/${fmt}?section=${section}`
+export const exportApplication = (id: number, fmt: string, section: string, p?: CVLayoutParams) => {
+  const q = layoutQuery(p)
+  return `${API_BASE}/api/applications/${id}/export/${fmt}?section=${section}${q ? `&${q}` : ''}`
+}
 
 // Reach Outs
 export const getReachOuts = () => request('/api/reachouts')

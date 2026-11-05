@@ -1,85 +1,75 @@
 'use client'
+// In-app CV preview. Mirrors the block rules in
+// backend/app/services/cv_layout/blocks.py and the PDF/DOCX exporters, so the
+// preview reads the same as the exported document: single column, left-aligned
+// 10.5pt text, "Role — Company" with dates right-aligned, and "####" sub-group
+// labels whose entries use a hanging indent instead of bullet dots.
 
-interface CVSection {
-  type: 'name' | 'contact' | 'h2' | 'h3' | 'bullet' | 'text' | 'blank'
-  content: string
+type Block =
+  | { kind: 'name' | 'subtitle' | 'section' | 'group' | 'bullet' | 'entry' | 'continuation' | 'para'; text: string }
+  | { kind: 'contact'; parts: string[] }
+  | { kind: 'role'; role: string; org: string; dates: string }
+
+function parseRole(line: string): { role: string; org: string; dates: string } {
+  const parts = line.split('|').map((p) => p.trim())
+  if (parts.length === 1) return { role: parts[0], org: '', dates: '' }
+  if (parts.length === 2) {
+    return /\d{4}|present|current/i.test(parts[1])
+      ? { role: parts[0], org: '', dates: parts[1] }
+      : { role: parts[0], org: parts[1], dates: '' }
+  }
+  return { role: parts[0], org: parts.slice(1, -1).filter(Boolean).join(', '), dates: parts[parts.length - 1] }
 }
 
-const SECTION_ICONS: Record<string, string> = {
-  'PROFESSIONAL PROFILE': '▸',
-  'PROFILE': '▸',
-  'SUMMARY': '▸',
-  'KEY SKILLS': '◈',
-  'SKILLS': '◈',
-  'TOOLS AND TECHNOLOGIES': '⊞',
-  'TOOLS': '⊞',
-  'TECHNOLOGIES': '⊞',
-  'PROFESSIONAL EXPERIENCE': '◷',
-  'EXPERIENCE': '◷',
-  'WORK EXPERIENCE': '◷',
-  'SELECTED ACHIEVEMENTS': '◆',
-  'ACHIEVEMENTS': '◆',
-  'TRAINING AND CERTIFICATIONS': '◎',
-  'CERTIFICATIONS': '◎',
-  'TRAINING': '◎',
-  'EDUCATION': '◉',
-  'PROJECTS': '◫',
-  'EVIDENCE': '◧',
-}
-
-function detectContactType(item: string): string {
-  const s = item.toLowerCase()
-  if (s.includes('@')) return 'email'
-  if (/^\+?[\d\s\-().]{7,}$/.test(item.trim())) return 'phone'
-  if (s.includes('linkedin')) return 'linkedin'
-  if (s.startsWith('http') || (s.includes('.') && !s.includes(' '))) return 'web'
-  return 'location'
-}
-
-const CONTACT_ICONS: Record<string, string> = {
-  email: '✉',
-  phone: '✆',
-  linkedin: 'in',
-  web: '⊕',
-  location: '◎',
-}
-
-function parse(md: string): CVSection[] {
-  const lines = md.split('\n')
-  const sections: CVSection[] = []
-  let foundName = false
-
-  for (const raw of lines) {
-    const line = raw.trimEnd()
-    const stripped = line.trim()
-
-    if (!foundName && !stripped.startsWith('# ')) continue
-
-    if (stripped.startsWith('# ')) {
-      foundName = true
-      sections.push({ type: 'name', content: stripped.slice(2).trim() })
-    } else if (stripped.startsWith('## ')) {
-      sections.push({ type: 'h2', content: stripped.slice(3).trim() })
-    } else if (stripped.startsWith('### ')) {
-      sections.push({ type: 'h3', content: stripped.slice(4).trim() })
-    } else if (stripped.startsWith('- ') || stripped.startsWith('* ')) {
-      sections.push({ type: 'bullet', content: stripped.slice(2).trim() })
-    } else if (/^---+$/.test(stripped)) {
-      // skip HR
-    } else if (!stripped) {
-      sections.push({ type: 'blank', content: '' })
-    } else {
-      // Contact line detection: right after name, contains | or @
-      const prev = sections.filter(s => s.type !== 'blank').slice(-1)[0]
-      if (prev?.type === 'name' && (stripped.includes('|') || stripped.includes('@'))) {
-        sections.push({ type: 'contact', content: stripped })
+export function parseCV(md: string): Block[] {
+  const lines = (md || '').split('\n')
+  const blocks: Block[] = []
+  let i = 0
+  if (lines.some((l) => l.trim().startsWith('# '))) {
+    while (i < lines.length && !lines[i].trim().startsWith('# ')) i++
+  }
+  let inGroup = false
+  let header = false
+  for (; i < lines.length; i++) {
+    const raw = lines[i].replace(/\s+$/, '')
+    const s = raw.trim()
+    if (!s || /^-{3,}$/.test(s) || s === '<!-- pagebreak -->') continue
+    if (s.startsWith('# ')) {
+      blocks.push({ kind: 'name', text: s.slice(2).trim() })
+      header = true
+      continue
+    }
+    if (header && !s.startsWith('#')) {
+      if (s.includes('|') || s.includes('@')) {
+        blocks.push({ kind: 'contact', parts: s.split('|').map((p) => p.trim()).filter(Boolean) })
+        header = false
+      } else if (!blocks.some((b) => b.kind === 'subtitle' || b.kind === 'contact')) {
+        blocks.push({ kind: 'subtitle', text: s })
       } else {
-        sections.push({ type: 'text', content: stripped })
+        header = false
+        blocks.push({ kind: 'para', text: s })
       }
+      continue
+    }
+    header = false
+    if (s.startsWith('#### ')) {
+      blocks.push({ kind: 'group', text: s.slice(5).trim() })
+      inGroup = true
+    } else if (s.startsWith('### ')) {
+      blocks.push({ kind: 'role', ...parseRole(s.slice(4)) })
+      inGroup = false
+    } else if (s.startsWith('## ')) {
+      blocks.push({ kind: 'section', text: s.slice(3).trim() })
+      inGroup = false
+    } else if (s.startsWith('- ') || s.startsWith('* ')) {
+      blocks.push({ kind: inGroup ? 'entry' : 'bullet', text: s.slice(2).trim() })
+    } else if (/^[ \t]/.test(raw) && blocks.length && ['bullet', 'entry', 'continuation'].includes(blocks[blocks.length - 1].kind)) {
+      blocks.push({ kind: 'continuation', text: s })
+    } else {
+      blocks.push({ kind: 'para', text: s })
     }
   }
-
-  return sections
+  return blocks
 }
 
 function escapeHtml(text: string): string {
@@ -95,127 +85,78 @@ function inlineHtml(text: string): string {
   return escapeHtml(text)
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code style="font-family:monospace;font-size:0.9em;background:#f1f5f9;padding:0 3px;border-radius:3px">$1</code>')
 }
 
+const html = (text: string) => ({ __html: inlineHtml(text) })
+
 export default function CVRenderer({ markdown }: { markdown: string }) {
-  const sections = parse(markdown)
+  const blocks = parseCV(markdown)
   const nodes: React.ReactNode[] = []
   let i = 0
-
-  while (i < sections.length) {
-    const s = sections[i]
-
-    // Name
-    if (s.type === 'name') {
-      nodes.push(
-        <div key={i} className="cv-name-block">
-          <h1 className="cv-name">{s.content}</h1>
-        </div>
-      )
-      i++
-      continue
-    }
-
-    // Contact row
-    if (s.type === 'contact') {
-      const parts = s.content.split('|').map(p => p.trim()).filter(Boolean)
-      nodes.push(
-        <div key={i} className="cv-contact-row">
-          {parts.map((p, j) => {
-            const type = detectContactType(p)
-            const icon = CONTACT_ICONS[type]
-            return (
-              <span key={j} className="cv-contact-item">
-                <span className="cv-contact-icon">{icon}</span>
-                <span>{p}</span>
-              </span>
-            )
-          })}
-        </div>
-      )
-      i++
-      continue
-    }
-
-    // Section heading ##
-    if (s.type === 'h2') {
-      const label = s.content.toUpperCase()
-      const icon = SECTION_ICONS[label] || '▸'
-      nodes.push(
-        <div key={i} className="cv-section-head">
-          <span className="cv-section-icon">{icon}</span>
-          <span className="cv-section-label">{label}</span>
-          <div className="cv-section-rule" />
-        </div>
-      )
-      i++
-      continue
-    }
-
-    // Role header ###
-    if (s.type === 'h3') {
-      const parts = s.content.split('|').map(p => p.trim())
-      const role = inlineHtml(parts[0] || '')
-      const company = parts[1] || ''
-      const dates = parts[2] || ''
-      nodes.push(
-        <div key={i} className="cv-role">
-          <div className="cv-role-info">
-            <span className="cv-role-title" dangerouslySetInnerHTML={{ __html: role }} />
-            {company && <span className="cv-role-company">{company}</span>}
-          </div>
-          {dates && <span className="cv-role-dates">{dates}</span>}
-        </div>
-      )
-      i++
-      continue
-    }
-
-    // Bullets — collect a run
-    if (s.type === 'bullet') {
-      const bullets: string[] = [s.content]
-      i++
-      while (i < sections.length && sections[i].type === 'bullet') {
-        bullets.push(sections[i].content)
+  while (i < blocks.length) {
+    const b = blocks[i]
+    const key = `b-${i}`
+    if (b.kind === 'bullet' || b.kind === 'continuation') {
+      // Group a run of bullets (with their continuation lines) into one list.
+      const items: React.ReactNode[] = []
+      while (i < blocks.length && (blocks[i].kind === 'bullet' || blocks[i].kind === 'continuation')) {
+        const item = blocks[i] as { kind: string; text: string }
+        items.push(
+          item.kind === 'bullet'
+            ? <li key={i} className="cv-bullet" dangerouslySetInnerHTML={html(item.text)} />
+            : <li key={i} className="cv-continuation" dangerouslySetInnerHTML={html(item.text)} />,
+        )
         i++
       }
-      nodes.push(
-        <ul key={`ul-${i}`} className="cv-list">
-          {bullets.map((b, j) => (
-            <li key={j}>
-              <span className="cv-bullet-dot" />
-              <span dangerouslySetInnerHTML={{ __html: inlineHtml(b) }} />
-            </li>
-          ))}
-        </ul>
-      )
+      nodes.push(<ul key={key} className="cv-list">{items}</ul>)
       continue
     }
-
-    // Skip blank lines that just add noise
-    if (s.type === 'blank') {
-      i++
+    if (b.kind === 'entry') {
+      const items: React.ReactNode[] = []
+      while (i < blocks.length && blocks[i].kind === 'entry') {
+        items.push(<li key={i} className="cv-entry" dangerouslySetInnerHTML={html((blocks[i] as { text: string }).text)} />)
+        i++
+      }
+      nodes.push(<ul key={key} className="cv-entries">{items}</ul>)
       continue
     }
-
-    // Plain text paragraph
-    if (s.type === 'text' && s.content) {
-      nodes.push(
-        <p key={i} className="cv-para" dangerouslySetInnerHTML={{ __html: inlineHtml(s.content) }} />
-      )
+    switch (b.kind) {
+      case 'name':
+        nodes.push(<h1 key={key} className="cv-name">{b.text}</h1>)
+        break
+      case 'subtitle':
+        nodes.push(<p key={key} className="cv-subtitle">{b.text}</p>)
+        break
+      case 'contact':
+        nodes.push(<p key={key} className="cv-contact">{b.parts.join('  |  ')}</p>)
+        break
+      case 'section':
+        nodes.push(<h2 key={key} className="cv-section">{b.text}</h2>)
+        break
+      case 'group':
+        nodes.push(<h4 key={key} className="cv-group">{b.text}</h4>)
+        break
+      case 'role':
+        nodes.push(
+          <div key={key} className="cv-role">
+            <span className="cv-role-text">
+              <strong dangerouslySetInnerHTML={html(b.role)} />
+              {b.org && <span> — {b.org}</span>}
+            </span>
+            {b.dates && <span className="cv-role-dates">{b.dates}</span>}
+          </div>,
+        )
+        break
+      case 'para':
+        nodes.push(<p key={key} className="cv-para" dangerouslySetInnerHTML={html(b.text)} />)
+        break
     }
-
     i++
   }
 
   return (
     <div className="cv-document">
-      {/* Top accent strip */}
-      <div className="cv-accent-strip" />
-      <div className="cv-page">
-        {nodes}
-      </div>
+      <div className="cv-page">{nodes}</div>
     </div>
   )
 }

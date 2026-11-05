@@ -20,7 +20,7 @@ what you can't" rule:
 import re
 from dataclasses import dataclass
 
-from ...exporters.pdf_exporter import _UNICODE_REPLACEMENTS
+from ...exporters.pdf_exporter import _FALLBACKS
 from .sections import STANDARD_HEADINGS, parse, section_present
 
 Status = str  # "pass" | "warn" | "fail" | "info"
@@ -52,7 +52,7 @@ _MONTH_YEAR_RE = re.compile(r"^[A-Za-z]{3,9}\.?\s+\d{4}$")
 _ISO_YEAR_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 _YEAR_ONLY_RE = re.compile(r"^\d{4}$")
 
-_PDF_KNOWN_REPLACEMENTS = set(_UNICODE_REPLACEMENTS.keys())
+_PDF_KNOWN_REPLACEMENTS = set(_FALLBACKS.keys())
 
 
 def _date_style(token: str) -> str | None:
@@ -70,15 +70,15 @@ def _date_style(token: str) -> str | None:
 
 def find_unsupported_export_characters(markdown: str) -> list[str]:
     """Characters that will be altered on PDF export because fpdf2's core fonts
-    only support Latin-1 (see pdf_exporter._sanitize_pdf_text) and aren't
-    already one of the ones it knows how to normalise (smart quotes, dashes,
-    bullets, ellipsis)."""
+    only support Windows-1252 (see pdf_exporter._sanitize_pdf_text) and aren't
+    already one of the ones it knows how to normalise. Smart quotes, en/em
+    dashes, bullets and ellipses are in Windows-1252 and export as typed."""
     problems = []
     for ch in sorted(set(markdown or "")):
         if ch in _PDF_KNOWN_REPLACEMENTS or ch in "\n\t":
             continue
         try:
-            ch.encode("latin-1")
+            ch.encode("cp1252")
         except UnicodeEncodeError:
             problems.append(ch)
     return problems

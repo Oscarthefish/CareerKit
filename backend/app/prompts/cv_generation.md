@@ -85,13 +85,8 @@ Each achievement record has a short "title" plus fuller "situation" / "action" /
 
 If the candidate profile's "projects" list is empty, omit this section entirely.
 
-## CERTIFICATIONS
-- Certification Name (Abbreviation), Issuer, earned Year
-- Another Certification, Issuer (In Progress)
-
-## PROFESSIONAL TRAINING
-- Training or course title, Provider, Year
-- Another course, Provider, Year (do not phrase as a certification)
+## CERTIFICATIONS & TRAINING
+(Write this heading only, with nothing under it. CareerKit fills it in from the structured certification and training records - grouped into Certifications, Professional Training and Currently Studying - so it is always exact.)
 
 ## EDUCATION
 - Qualification, Institution, Year
@@ -107,7 +102,7 @@ Rules:
 - Do not invent experience, dates, employers, tools, certifications or outcomes
 - Omit any section for which there is no data
 - Never write a placeholder value anywhere on the CV (e.g. "(Unknown)", "(N/A)", "(not specified)", "TBC"). If a specific detail isn't in the data, either state the surrounding fact without it, or leave that detail out entirely — a visible placeholder looks like a data error, not a gap in employment history.
-- The profile's "certifications", "training" and "education" are already three separate, correctly-sorted lists — a formal diploma/degree is already in "education", not "training". Render each list under its own heading using its items' display_line; never move an item between sections and never list the same item under two headings.
+- The profile's "certifications", "training" and "education" are already three separate, correctly-sorted lists — a formal diploma/degree is already in "education", not "training". Certifications and training are filled in automatically under CERTIFICATIONS & TRAINING (see above) - do not list them anywhere else. Render "education" under EDUCATION using each item's display_line, and never list the same item under two headings.
 - If the candidate profile includes a "community_involvement" list, it has already been filtered to items the candidate wants on this CV — include a COMMUNITY INVOLVEMENT section for it. If that list is empty, omit the section entirely.
 
 {{STYLE_GUIDANCE}}

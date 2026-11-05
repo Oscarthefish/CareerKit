@@ -90,6 +90,12 @@ def parse(markdown: str) -> ParsedCV:
                 parsed.unrecognised_headings.append(heading)
             continue
 
+        if line.startswith("#### "):
+            # Sub-group label inside a section (e.g. "Certifications" within
+            # CERTIFICATIONS & TRAINING) - neither a section nor a role.
+            parsed.body_word_count += len(line[5:].split())
+            continue
+
         m = ROLE_HEADING_RE.match(line)
         if m:
             date_match = DATE_RANGE_RE.search(m.group(1))

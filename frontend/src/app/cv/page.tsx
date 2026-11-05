@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react'
 import AppShell from '@/components/AppShell'
 import PageHeader from '@/components/PageHeader'
 import AIButton from '@/components/AIButton'
-import CVRenderer from '@/components/CVRenderer'
+import CVLayoutPanel from '@/components/CVLayoutPanel'
 import BannedPhrasesWidget from '@/components/BannedPhrasesWidget'
 import EvidenceFeedbackWidget from '@/components/EvidenceFeedbackWidget'
 import { getCurrentCV, generateCV, brutalReview, checkATSHealth, getSkillGaps, saveCV, exportCV } from '@/lib/api'
@@ -97,17 +97,6 @@ export default function CVPage() {
         <PageHeader
           title="Master CV"
           description="Generated from your Career Profile. This is your comprehensive record, not a per-job document — a tailored, shorter CV for a specific job lives on that job's own page."
-          action={
-            <div className="flex items-center gap-2">
-              {cvContent && (
-                <>
-                  <a href={exportCV('md')} download className="btn-secondary btn-sm">Export MD</a>
-                  <a href={exportCV('docx')} download className="btn-secondary btn-sm">Export DOCX</a>
-                  <a href={exportCV('pdf')} download className="btn-secondary btn-sm">Export PDF</a>
-                </>
-              )}
-            </div>
-          }
         />
 
         {!cvContent ? (
@@ -176,12 +165,6 @@ export default function CVPage() {
                   description needed.
                 </p>
               </div>
-              <div className="card p-4 space-y-2">
-                <h3 className="text-sm font-semibold text-gray-700">Export</h3>
-                <a href={exportCV('md')} download className="btn-secondary w-full text-center">Markdown</a>
-                <a href={exportCV('docx')} download className="btn-secondary w-full text-center">Word DOCX</a>
-                <a href={exportCV('pdf')} download className="btn-secondary w-full text-center">PDF</a>
-              </div>
               <BannedPhrasesWidget />
             </div>
 
@@ -206,13 +189,13 @@ export default function CVPage() {
                   />
                 </div>
               ) : (
-                <div>
-                  <div className="flex items-center justify-between mb-3 px-1">
-                    <p className="text-xs text-gray-400">Preview — scroll down to see full CV</p>
-                    <button onClick={startEdit} className="btn-ghost btn-sm">Edit Markdown</button>
-                  </div>
-                  <CVRenderer markdown={cvContent!} />
-                </div>
+                <CVLayoutPanel
+                  markdown={cvContent!}
+                  storageKey="master"
+                  defaultTarget="unrestricted"
+                  exportUrl={(fmt, params) => exportCV(fmt, params)}
+                  actions={<button onClick={startEdit} className="btn-ghost btn-sm">Edit Markdown</button>}
+                />
               )}
             </div>
           </div>

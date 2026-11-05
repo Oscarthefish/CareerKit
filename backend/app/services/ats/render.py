@@ -35,6 +35,9 @@ def render_ats_view(markdown: str) -> str:
             lines.append(line[3:].strip().upper())
             lines.append("")
             continue
+        if line.startswith("#### "):
+            lines.append(_strip_markdown(line[5:]) + ":")
+            continue
         if line.startswith("### "):
             lines.append(_strip_markdown(line[4:]))
             continue

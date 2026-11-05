@@ -26,6 +26,9 @@ from ..ai.language import to_british
 from ..parsers.router import extract_text, SUPPORTED_EXTENSIONS
 from ..exporters import markdown_exporter, docx_exporter, pdf_exporter
 from ..storage.file_storage import get_application_folder
+from ..services.cv_layout import service as cv_layout
+from ..services.cv_layout.options import LayoutOptions, TARGET_TWO_PAGE
+from .cv import MEDIA_TYPES, layout_file_response
 from ..services.matching.grounding import (
     grounded_analysis, grounded_scorecard, ground_job_analysis, ground_scorecard, ground_requirements,
 )
@@ -349,7 +352,12 @@ def get_application(app_id: int, db: Session = Depends(get_db)):
     app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="Not found")
-    return _serialize(app)
+    data = _serialize(app)
+    # CVs saved before the structured Certifications & Training layout are
+    # shown (and so edited/saved) in the new structure - same content.
+    for key in ("custom_cv", "tailored_cv"):
+        data[key] = cv_layout.normalize_for_display(db, data[key])
+    return data
 
 
 class ApplicationUpdate(BaseModel):
@@ -989,7 +997,9 @@ def _export_download_name(app: JobApplication, section: str) -> str:
 
 
 @router.get("/{app_id}/export/{fmt}")
-def export_application(app_id: int, fmt: str, section: str = "cover-letter", db: Session = Depends(get_db)):
+def export_application(app_id: int, fmt: str, section: str = "cover-letter", target: Optional[str] = None,
+                       spacing: Optional[str] = None, order: Optional[str] = None, hide: Optional[str] = None,
+                       inline: bool = False, db: Session = Depends(get_db)):
     app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="Not found")
@@ -1010,18 +1020,18 @@ def export_application(app_id: int, fmt: str, section: str = "cover-letter", db:
     folder.mkdir(parents=True, exist_ok=True)
     safe_section = section.replace("/", "-")
     download_name = _export_download_name(app, section)
+    if fmt not in MEDIA_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported format: {fmt}")
 
-    if fmt == "md":
+    if section in ("custom-cv", "tailored-cv"):
+        # A per-job CV: same layout pipeline as the Master CV, aiming for two
+        # pages by default.
+        options = LayoutOptions.from_params(target, spacing, order, hide, default_target=TARGET_TWO_PAGE)
+        path, _ = cv_layout.export(db, content, fmt, folder / f"{safe_section}.{fmt}", options)
+    elif fmt == "md":
         path = markdown_exporter.export(content, folder / f"{safe_section}.md")
-        return FileResponse(str(path), filename=f"{download_name}.md", media_type="text/markdown")
     elif fmt == "docx":
         path = docx_exporter.export(content, folder / f"{safe_section}.docx")
-        return FileResponse(
-            str(path), filename=f"{download_name}.docx",
-            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
-    elif fmt == "pdf":
-        path = pdf_exporter.export(content, folder / f"{safe_section}.pdf")
-        return FileResponse(str(path), filename=f"{download_name}.pdf", media_type="application/pdf")
     else:
-        raise HTTPException(status_code=400, detail=f"Unsupported format: {fmt}")
+        path = pdf_exporter.export(content, folder / f"{safe_section}.pdf")
+    return layout_file_response(path, f"{download_name}.{fmt}", MEDIA_TYPES[fmt], inline)
