@@ -1,3 +1,4 @@
+import re
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from .config import get_setting, DATA_DIR
@@ -62,6 +63,7 @@ def init_db():
         ("evidence_items", "ownership", "VARCHAR(30)"),
         ("job_applications", "custom_cv_generated_at", "DATETIME"),
         ("achievements", "always_include", "BOOLEAN DEFAULT 0"),
+        ("job_applications", "job_url", "VARCHAR(1000)"),
     ]
     inspector = inspect(engine)
     with engine.begin() as conn:
@@ -69,3 +71,25 @@ def init_db():
             existing_columns = {item["name"] for item in inspector.get_columns(table)}
             if column not in existing_columns:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+        _backfill_job_urls(conn)
+
+
+_SCANNER_URL_LINE = re.compile(r"^URL:\s*(https?://\S+)\s*$", re.MULTILINE)
+
+
+def _backfill_job_urls(conn):
+    """Applications started from the job scanner before job_url existed only
+    recorded the listing link as a "URL: ..." line in company_research - lift
+    it into job_url so those jobs get a link too. Idempotent: only touches
+    rows whose job_url is still empty."""
+    rows = conn.execute(text(
+        "SELECT id, company_research FROM job_applications "
+        "WHERE (job_url IS NULL OR job_url = '') AND company_research LIKE '%URL:%'"
+    )).fetchall()
+    for row_id, research in rows:
+        match = _SCANNER_URL_LINE.search(research or "")
+        if match:
+            conn.execute(
+                text("UPDATE job_applications SET job_url = :url WHERE id = :id"),
+                {"url": match.group(1), "id": row_id},
+            )

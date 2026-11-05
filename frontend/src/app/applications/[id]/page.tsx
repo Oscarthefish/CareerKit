@@ -12,6 +12,7 @@ import Tabs from '@/components/ui/Tabs'
 import SectionHeader from '@/components/ui/SectionHeader'
 import JobStatus, { JOB_STATUSES } from '@/components/ui/JobStatus'
 import { MatchSummary } from '@/components/ui/MatchIndicator'
+import { JobLinkEditor } from '@/components/ui/JobLink'
 import {
   getApplication, updateApplication, analyzeJob, generateScorecard, generateJobMatch, generateCustomCV, saveCustomCV,
   generateCoverLetter, generateCVNotes, generateInterviewPrep,
@@ -66,6 +67,11 @@ export default function ApplicationDetailPage() {
     refresh()
   }
 
+  const saveJobUrl = async (job_url: string) => {
+    await updateApplication(appId, { job_url })
+    refresh()
+  }
+
   const saveNotes = async () => {
     await updateApplication(appId, { session_notes: notesValue })
     setEditingNotes(false)
@@ -105,6 +111,7 @@ export default function ApplicationDetailPage() {
                 {app.work_type && <span>· {app.work_type}</span>}
                 {app.salary_range && <span>· {app.salary_range}</span>}
               </div>
+              <JobLinkEditor url={app.job_url} onSave={saveJobUrl} />
               {matchResult && (
                 <div className="mt-2">
                   <MatchSummary score={matchResult.job_match.overall} band={matchResult.job_match.band} />

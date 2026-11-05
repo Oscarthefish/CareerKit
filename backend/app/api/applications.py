@@ -4,6 +4,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -233,6 +234,7 @@ def _serialize(app: JobApplication) -> dict:
         "location": app.location,
         "work_type": app.work_type,
         "salary_range": app.salary_range,
+        "job_url": app.job_url,
         "status": app.status,
         "applied_date": app.applied_date,
         "session_folder": app.session_folder,
@@ -281,6 +283,7 @@ def list_applications(db: Session = Depends(get_db)):
             "role": r.role,
             "location": r.location,
             "work_type": r.work_type,
+            "job_url": r.job_url,
             "status": r.status,
             "applied_date": r.applied_date,
             "created_at": r.created_at.isoformat() if r.created_at else None,
@@ -296,6 +299,22 @@ def list_applications(db: Session = Depends(get_db)):
     return result
 
 
+def _normalize_job_url(url: Optional[str]) -> Optional[str]:
+    """Tidy a user-entered job listing link. Blank -> None; a bare
+    "seek.co.nz/job/123" gets https:// prepended. Anything with a non-http(s)
+    scheme (javascript:, file:, ...) is rejected - the frontend renders this as
+    a clickable link."""
+    url = (url or "").strip()
+    if not url:
+        return None
+    if not urlparse(url).scheme:
+        url = "https://" + url.lstrip("/")
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Job link must be a web address (http or https)")
+    return url
+
+
 class ApplicationCreate(BaseModel):
     company: Optional[str] = None
     role: Optional[str] = None
@@ -303,15 +322,18 @@ class ApplicationCreate(BaseModel):
     location: Optional[str] = None
     work_type: Optional[str] = None
     salary_range: Optional[str] = None
+    job_url: Optional[str] = None
     job_description_raw: Optional[str] = None
 
 
 @router.post("")
 def create_application(body: ApplicationCreate, db: Session = Depends(get_db)):
     folder = get_application_folder(body.company or "unknown", body.role or "role")
+    data = body.model_dump()
+    data["job_url"] = _normalize_job_url(data.get("job_url"))
     app = JobApplication(
         session_folder=str(folder),
-        **body.model_dump()
+        **data
     )
     db.add(app)
     db.commit()
@@ -334,6 +356,7 @@ class ApplicationUpdate(BaseModel):
     location: Optional[str] = None
     work_type: Optional[str] = None
     salary_range: Optional[str] = None
+    job_url: Optional[str] = None  # "" clears it
     status: Optional[str] = None
     applied_date: Optional[str] = None
     job_description_raw: Optional[str] = None
@@ -352,6 +375,8 @@ def update_application(app_id: int, body: ApplicationUpdate, db: Session = Depen
     if not app:
         raise HTTPException(status_code=404, detail="Not found")
     for k, v in body.model_dump(exclude_none=True).items():
+        if k == "job_url":
+            v = _normalize_job_url(v)
         setattr(app, k, v)
     db.commit()
     db.refresh(app)

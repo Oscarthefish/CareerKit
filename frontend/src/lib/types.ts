@@ -216,6 +216,7 @@ export interface JobApplication {
   location: string | null
   work_type: string | null
   salary_range: string | null
+  job_url: string | null
   status: string
   applied_date: string | null
   session_folder: string
@@ -244,6 +245,7 @@ export interface JobApplicationSummary {
   role: string | null
   location: string | null
   work_type: string | null
+  job_url: string | null
   status: string
   applied_date: string | null
   created_at: string
