@@ -910,6 +910,108 @@ def _strip_weak_entries_superseded_by_forced_matches(scorecard: dict, forced: li
         scorecard[key] = kept
 
 
+# Words that say nothing about WHICH skill an item demonstrates - matching on
+# them would let any item "support" any skill ("Forensic tools" vs an
+# achievement's "tools_involved").
+_SUPPORT_GENERIC_WORDS = {
+    "tools", "tool", "platforms", "platform", "skills", "skill", "experience", "knowledge",
+    "technologies", "technology", "systems", "system", "software", "solutions", "proficiency",
+    "ability", "understanding", "strong", "familiarity", "hands", "using", "use", "including",
+    "related", "various", "based", "involved", "demonstrated", "achievement", "project",
+    "category", "technical", "work", "role", "responsibilities", "key", "practical", "good",
+}
+# Common acronyms <-> what they stand for / products that evidence them.
+_SUPPORT_SYNONYMS = {
+    "soc": {"security", "operations"},
+    "siem": {"splunk", "sentinel", "qradar", "elastic", "siem", "log"},
+    "edr": {"xdr", "cortex", "crowdstrike", "defender", "sentinelone", "endpoint", "carbon"},
+    "xdr": {"edr", "cortex", "endpoint"},
+    "endpoint": {"edr", "xdr", "cortex", "crowdstrike", "defender"},
+    "log": {"splunk", "siem", "sentinel"},
+}
+
+
+def _support_words(text: str) -> set[str]:
+    return {w for w in _significant_requirement_words(text) if w not in _SUPPORT_GENERIC_WORDS}
+
+
+def _flatten_text(value) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(_flatten_text(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return " ".join(_flatten_text(v) for v in value)
+    return ""
+
+
+def _profile_item_index(profile: dict) -> list[tuple[str, str]]:
+    """(lowercased name, full text) for every profile item that can be cited
+    as evidence - the full text being everything recorded about it."""
+    out = []
+    for key, name_fields in (
+        ("skills", ("name",)), ("work_experience", ("company", "role")), ("achievements", ("title",)),
+        ("projects", ("name",)), ("certifications", ("name",)), ("training", ("title",)),
+        ("evidence", ("title",)), ("community_involvement", ("organisation", "name", "title")),
+    ):
+        for item in profile.get(key, []) or []:
+            if not isinstance(item, dict):
+                continue
+            text = _flatten_text(item)
+            for field in name_fields:
+                name = (item.get(field) or "").strip().lower()
+                if len(name) >= 4:
+                    out.append((name, text))
+    return out
+
+
+def strong_match_supported(skill: str, evidence: str, item_index: list[tuple[str, str]]) -> bool:
+    """True if the cited evidence actually shows the skill: at least one of
+    the skill's distinctive words (or a known synonym/acronym of it) appears
+    in the evidence text or in the full record of a profile item the
+    evidence cites. A real item cited for an unrelated skill fails - e.g.
+    "Digital Forensics" backed by "Designed hardened secure laptops"."""
+    skill_words = _support_words(skill or "")
+    if not skill_words:
+        return True
+    ev_low = (evidence or "").lower()
+    haystack = evidence or ""
+    for name, text in item_index:
+        if name in ev_low:
+            haystack += " " + text
+    hay_words = _support_words(haystack)
+    targets = set(skill_words)
+    for w in skill_words:
+        targets |= _SUPPORT_SYNONYMS.get(w, set())
+    # "Security operations centre" -> also accept "SOC" written in the evidence.
+    acronym = "".join(w[0] for w in re.findall(r"[a-zA-Z]+", (skill or "").lower()) if w not in _STEM_STOPWORDS)
+    if len(acronym) >= 3:
+        targets.add(acronym)
+    return any(_words_match(t, h) for t in targets for h in hay_words)
+
+
+def demote_unsupported_strong_matches(scorecard: dict, profile: dict) -> dict:
+    """Move strong_matches whose cited evidence doesn't show the skill into
+    partial_matches, so cover letters and CVs don't build claims on them."""
+    if not isinstance(scorecard, dict):
+        return scorecard
+    index = _profile_item_index(profile or {})
+    kept, partial = [], list(scorecard.get("partial_matches") or [])
+    for m in scorecard.get("strong_matches") or []:
+        if isinstance(m, dict) and not m.get("forced") and not strong_match_supported(m.get("skill", ""), m.get("evidence", ""), index):
+            partial.append({
+                "skill": m.get("skill"),
+                "gap": "The cited evidence doesn't directly show this skill - don't present it as a strength.",
+                "evidence": m.get("evidence"),
+            })
+        else:
+            kept.append(m)
+    out = dict(scorecard)
+    out["strong_matches"] = kept
+    out["partial_matches"] = partial
+    return out
+
+
 def sanitize_scorecard(
     scorecard: dict, profile: dict, job_match_result: dict | None = None, job_analysis: dict | None = None
 ) -> dict:
@@ -1065,4 +1167,8 @@ def sanitize_scorecard(
     result["quick_learning_gaps"] = quick_learning_gaps
     result["genuine_gaps"] = genuine_gaps
     result["do_not_claim"] = do_not_claim
-    return result
+    # A real profile item cited for a skill it doesn't show (e.g. "Digital
+    # Forensics" backed by a hardened-laptop build) - see
+    # strong_match_supported. Forced entries were matched deterministically
+    # from the profile already, so they're left alone.
+    return demote_unsupported_strong_matches(result, profile)
