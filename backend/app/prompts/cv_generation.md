@@ -100,6 +100,7 @@ Rules:
 - Professional, direct, calm and technically credible tone; New Zealand and British English throughout
 - No generic AI phrases or filler language
 - Do not invent experience, dates, employers, tools, certifications or outcomes
+- Describe ability plainly and factually: "skilled", "experienced" or simply what was done. Never use inflated self-description such as "expert-level", "highly skilled", "highly experienced", "deep expertise" or "world-class" - leave the level unstated rather than overclaim it.
 - Omit any section for which there is no data
 - Never write a placeholder value anywhere on the CV (e.g. "(Unknown)", "(N/A)", "(not specified)", "TBC"). If a specific detail isn't in the data, either state the surrounding fact without it, or leave that detail out entirely — a visible placeholder looks like a data error, not a gap in employment history.
 - The profile's "certifications", "training" and "education" are already three separate, correctly-sorted lists — a formal diploma/degree is already in "education", not "training". Certifications and training are filled in automatically under CERTIFICATIONS & TRAINING (see above) - do not list them anywhere else. Render "education" under EDUCATION using each item's display_line, and never list the same item under two headings.

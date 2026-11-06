@@ -9,6 +9,7 @@ from ..models.cv import CVVersion
 from ..services.profile_service import build_profile_summary
 from ..services.prompt_service import fill_prompt
 from ..ai.provider_factory import get_provider
+from ..ai.tone import tone_down
 from ..exporters import markdown_exporter, docx_exporter, pdf_exporter
 from ..storage.file_storage import get_exports_dir
 from ..services.cv_layout import service as cv_layout
@@ -1064,7 +1065,7 @@ def apply_cv_safety_nets(content: str, profile: dict, jd_terminology: list[str] 
     content = _dedupe_achievement_bullets(content, profile.get("achievements", []))
     content = replace_credentials_section(content, profile.get("certifications", []), profile.get("training", []))
     content = _ensure_community_involvement_present(content, profile.get("community_involvement", []))
-    return normalize_structure(content)
+    return normalize_structure(tone_down(content))
 
 
 def apply_custom_cv_safety_nets(content: str, profile: dict, jd_terminology: list[str] | None = None) -> str:
@@ -1099,7 +1100,7 @@ def apply_custom_cv_safety_nets(content: str, profile: dict, jd_terminology: lis
     content = replace_credentials_section(content, profile.get("certifications", []), profile.get("training", []))
     content = _force_additional_background(content, profile.get("work_experience", []), profile.get("education", []))
     content = _ensure_community_involvement_present(content, profile.get("community_involvement", []))
-    return normalize_structure(content)
+    return normalize_structure(tone_down(content))
 
 
 @router.get("/current")

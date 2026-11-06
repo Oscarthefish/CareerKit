@@ -165,6 +165,20 @@ _BASE_BANNED_PHRASES = [
         "impressed by the company's commitment",
         "explain in greater detail why",
         "discuss this further and explain",
+        # Inflated self-description - say "skilled"/"experienced" plainly instead.
+        "expert-level",
+        "expert level",
+        "highly skilled",
+        "highly-skilled",
+        "highly experienced",
+        "highly proficient",
+        "extremely skilled",
+        "exceptionally skilled",
+        "deep expertise",
+        "extensive expertise",
+        "world-class",
+        "best-in-class",
+        "unparalleled",
 ]
 
 
