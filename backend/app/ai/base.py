@@ -13,6 +13,9 @@ class AIProvider(ABC):
         flag_years_experience: bool = False,
         in_progress_certs: Optional[list[str]] = None,
         former_employers: Optional[list[str]] = None,
+        unsupported_claims: Optional[list[str]] = None,
+        max_corrections: int = 1,
+        has_current_role: Optional[bool] = None,
     ) -> str:
         """Generate text from a prompt. If banned_phrases is given, the
         implementation should check the result for violations and attempt at
@@ -24,7 +27,12 @@ class AIProvider(ABC):
         If in_progress_certs is given, a claim that states one of these
         certifications as already held should trigger the same retry. If
         former_employers is given, describing one of them as the candidate's
-        current role should trigger the same retry."""
+        current role should trigger the same retry, as should any "my current
+        role" wording when has_current_role is False. If unsupported_claims is
+        given, a sentence claiming experience in one of those skills (without
+        an honest hedge) should trigger the same retry. Every rewrite is
+        re-checked, up to max_corrections rounds, and the attempt with the
+        fewest problems is returned."""
 
     @abstractmethod
     async def generate_json(

@@ -297,6 +297,11 @@ def former_employer_names(profile: dict) -> list[str]:
     return seen
 
 
+def has_current_role(profile: dict) -> bool:
+    """Whether any work experience entry is marked current."""
+    return any(e.get("is_current") for e in profile.get("work_experience", []))
+
+
 def build_profile_summary(db: Session, mode: str = DEFAULT_MODE) -> dict:
     """Build a flat dict summary of the profile for use in AI prompts.
 
