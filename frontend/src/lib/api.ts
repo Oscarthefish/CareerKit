@@ -237,6 +237,8 @@ export const saveCustomCV = (id: number, content: string) =>
 export const getSkillGaps = () => request('/api/insights/skill-gaps')
 export const generateCoverLetter = (id: number) =>
   request(`/api/applications/${id}/cover-letter`, { method: 'POST' })
+export const coverLetterReviewPrompt = (id: number) =>
+  request<{ prompt: string }>(`/api/applications/${id}/cover-letter/review-prompt`)
 export const generateCVNotes = (id: number) =>
   request(`/api/applications/${id}/cv-notes`, { method: 'POST' })
 export const generateInterviewPrep = (id: number) =>
