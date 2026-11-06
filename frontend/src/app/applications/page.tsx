@@ -20,10 +20,27 @@ function nextAction(app: JobApplicationSummary): string | null {
   return null
 }
 
+// "Active" = still in play; rejected and withdrawn jobs are closed.
+const CLOSED_STATUSES = ['rejected', 'withdrawn']
+const isActive = (a: JobApplicationSummary) => !CLOSED_STATUSES.includes(a.status)
+const FILTER_KEY = 'careerkit.jobsFilter'
+
 export default function ApplicationsPage() {
   const [apps, setApps] = useState<JobApplicationSummary[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState('all')
+  const [filter, setFilterState] = useState('active')
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(FILTER_KEY)
+      if (saved) setFilterState(saved)
+    } catch {}
+  }, [])
+
+  const setFilter = (f: string) => {
+    setFilterState(f)
+    try { localStorage.setItem(FILTER_KEY, f) } catch {}
+  }
 
   const load = async () => {
     setLoading(true)
@@ -37,7 +54,30 @@ export default function ApplicationsPage() {
 
   useEffect(() => { load() }, [])
 
-  const filtered = filter === 'all' ? apps : apps.filter((a) => a.status === filter)
+  const matches = (a: JobApplicationSummary, f: string) =>
+    f === 'all' ? true : f === 'active' ? isActive(a) : a.status === f
+  const filtered = apps.filter((a) => matches(a, filter))
+  const filterLabel = (f: string) =>
+    f === 'all' ? 'All' : f === 'active' ? 'Active' : statusLabel(f)
+  const filterButton = (f: string) => {
+    const count = apps.filter((a) => matches(a, f)).length
+    return (
+      <button
+        key={f}
+        onClick={() => setFilter(f)}
+        aria-pressed={filter === f}
+        className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
+          filter === f
+            ? 'bg-brand-700 text-white shadow-sm'
+            : count === 0
+              ? 'text-gray-400 hover:bg-white'
+              : 'text-gray-700 hover:bg-white'
+        }`}
+      >
+        {filterLabel(f)} <span className={filter === f ? 'opacity-80' : 'text-gray-400'}>{count}</span>
+      </button>
+    )
+  }
 
   const handleDelete = async (id: number, e: React.MouseEvent) => {
     e.preventDefault()
@@ -57,18 +97,19 @@ export default function ApplicationsPage() {
         />
 
         {/* Filters */}
-        <div className="flex items-center gap-1.5 mb-5 overflow-x-auto">
-          {['all', ...JOB_STATUSES].map((status) => (
-            <button
-              key={status}
-              onClick={() => setFilter(status)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
-                filter === status ? 'bg-brand-700 text-white' : 'text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              {status === 'all' ? `All (${apps.length})` : `${statusLabel(status)} (${apps.filter((a) => a.status === status).length})`}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2 mb-5">
+          <span className="text-xs font-medium text-gray-500 mr-1">Show</span>
+          <div
+            role="group"
+            aria-label="Filter jobs"
+            className="inline-flex flex-wrap items-center gap-0.5 p-1 rounded-lg"
+            style={{ background: 'var(--bg-surface-subtle)', border: '1px solid var(--border-default)' }}
+          >
+            {filterButton('active')}
+            {filterButton('all')}
+            <span className="w-px h-4 mx-1 bg-gray-300" aria-hidden="true" />
+            {JOB_STATUSES.map(filterButton)}
+          </div>
         </div>
 
         {loading ? (
@@ -83,7 +124,11 @@ export default function ApplicationsPage() {
                 action={<Link href="/applications/new" className="btn-primary">Add your first job</Link>}
               />
             ) : (
-              <EmptyState title="No jobs in this view" description="Try a different filter." />
+              <EmptyState
+                title={`No ${filterLabel(filter).toLowerCase()} jobs`}
+                description="Try a different filter."
+                action={<button onClick={() => setFilter('all')} className="btn-secondary">Show all jobs</button>}
+              />
             )}
           </div>
         ) : (
