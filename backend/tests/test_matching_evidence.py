@@ -778,7 +778,7 @@ class SanitizeScorecardTests(unittest.TestCase):
         # broad, genuinely-strong general claim based on a coincidental
         # match to a much narrower, differently-scoped requirement.
         scorecard = {
-            "strong_matches": [{"skill": "Investigations", "evidence": "Achievement: Led ransomware response"}],
+            "strong_matches": [{"skill": "Investigations", "evidence": "Achievement: Led ransomware response (investigation and containment)"}],
             "do_not_claim": [],
         }
         job_match_result = {"requirement_coverage": [
@@ -973,7 +973,7 @@ class SanitizeScorecardTests(unittest.TestCase):
             "key_responsibilities": ["triage and investigate alerts", "tune detections to cut noise"],
         }
         scorecard = {
-            "strong_matches": [{"skill": "SOC experience", "evidence": "Achievement: Led ransomware response"}],
+            "strong_matches": [{"skill": "SOC experience", "evidence": "Achievement: Led ransomware response in the SOC"}],
             "partial_matches": [
                 {"skill": "Cloud security", "gap": "No direct experience in cloud security, but has experience with cloud-managed security products", "evidence": "Work experience: timbre Digital"},
                 {"skill": "Fraud intelligence", "gap": "No direct experience in fraud intelligence, but has experience in OSINT and threat research", "evidence": "Work experience: timbre Digital"},
@@ -1009,3 +1009,58 @@ class SanitizeScorecardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StrongMatchSupportTests(unittest.TestCase):
+    """A real profile item cited for a skill it doesn't show must not stay a
+    strong match - real case: "Digital Forensics" and "Forensic tools
+    (X-Ways Forensics, Axiom, FTK)" backed by a hardened-laptop build, which
+    the cover letter then turned into "proficiency in forensic tools such as
+    Linux and full-disk encryption"."""
+
+    PROFILE = {
+        "achievements": [
+            {"title": "Designed hardened secure laptops for executive travel",
+             "description": "Built locked-down travel laptops for executives.",
+             "tools_involved": ["Linux", "Full-disk encryption"]},
+            {"title": "Owned Security Operations workstreams during global ransomware response",
+             "description": "Hands-on investigation and containment across the enterprise.",
+             "tools_involved": ["Cortex XDR", "Splunk Enterprise Security"]},
+        ],
+        "work_experience": [
+            {"company": "timbre Digital", "role": "Senior Security Operations Analyst",
+             "key_responsibilities": ["Investigated alerts in the SIEM", "Threat detection and tuning"]},
+        ],
+    }
+
+    def _index(self):
+        from app.services.matching.evidence import _profile_item_index
+        return _profile_item_index(self.PROFILE)
+
+    def test_unrelated_evidence_is_not_support(self):
+        from app.services.matching.evidence import strong_match_supported
+        laptops = "Achievement: 'Designed hardened secure laptops for executive travel', tools_involved: Linux, Full-disk encryption"
+        self.assertFalse(strong_match_supported("Digital Forensics", laptops, self._index()))
+        self.assertFalse(strong_match_supported("Forensic tools (X-Ways Forensics, Axiom, FTK)", laptops, self._index()))
+
+    def test_related_evidence_is_support_via_item_text_and_synonyms(self):
+        from app.services.matching.evidence import strong_match_supported
+        idx = self._index()
+        self.assertTrue(strong_match_supported(
+            "Incident investigation", "Achievement: 'Owned Security Operations workstreams during global ransomware response'", idx))
+        self.assertTrue(strong_match_supported("SOC experience", "Work experience: timbre Digital, Senior Security Operations Analyst", idx))
+        self.assertTrue(strong_match_supported("SIEM or log platform", "Achievement: Used Splunk Enterprise Security daily", idx))
+        self.assertTrue(strong_match_supported("EDR/XDR platforms", "Project: SOC Analyst Toolbox, technologies: Cortex XDR", idx))
+        self.assertTrue(strong_match_supported("Threat detection", "Work experience: timbre Digital", idx))
+
+    def test_demotes_to_partial_but_keeps_forced(self):
+        from app.services.matching.evidence import demote_unsupported_strong_matches
+        laptops = "Achievement: 'Designed hardened secure laptops for executive travel'"
+        sc = {"strong_matches": [
+            {"skill": "Digital Forensics", "evidence": laptops},
+            {"skill": "Memory forensics", "evidence": laptops, "forced": True},
+            {"skill": "Threat detection", "evidence": "Work experience: timbre Digital"},
+        ], "partial_matches": []}
+        out = demote_unsupported_strong_matches(sc, self.PROFILE)
+        self.assertEqual([m["skill"] for m in out["strong_matches"]], ["Memory forensics", "Threat detection"])
+        self.assertEqual([m["skill"] for m in out["partial_matches"]], ["Digital Forensics"])
