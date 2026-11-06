@@ -23,6 +23,7 @@ from ..services.prompt_service import fill_prompt
 from ..services.application_service import persist_application_files
 from ..ai.provider_factory import get_provider
 from ..ai.language import to_british
+from ..ai.tone import tone_down
 from ..parsers.router import extract_text, SUPPORTED_EXTENSIONS
 from ..exporters import markdown_exporter, docx_exporter, pdf_exporter
 from ..storage.file_storage import get_application_folder
@@ -755,6 +756,23 @@ def save_custom_cv(app_id: int, body: CustomCvSaveRequest, db: Session = Depends
     return {"custom_cv": app.custom_cv}
 
 
+# Phrases that make a cover letter read as templated or AI-written. Letter-
+# only (not in the shared banned list) so CV wording isn't affected; passing
+# them as banned_phrases means the provider forces a rewrite if one appears.
+_LETTER_AI_TELLS = [
+    "I am writing to express",
+    "my strongest matches",
+    "my key strengths",
+    "aligns with",
+    "aligns perfectly",
+    "a testament to",
+    "furthermore",
+    "moreover",
+    "delve",
+    "honed",
+]
+
+
 @router.post("/{app_id}/cover-letter")
 async def generate_cover_letter(app_id: int, db: Session = Depends(get_db)):
     app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
@@ -778,7 +796,7 @@ async def generate_cover_letter(app_id: int, db: Session = Depends(get_db)):
     provider = get_provider()
     letter = to_british(await provider.generate(
         prompt,
-        banned_phrases=get_banned_phrases_list(db),
+        banned_phrases=get_banned_phrases_list(db) + _LETTER_AI_TELLS,
         flag_years_experience=True,
         in_progress_certs=in_progress_cert_names(profile),
         former_employers=former_employer_names(profile),
@@ -787,6 +805,7 @@ async def generate_cover_letter(app_id: int, db: Session = Depends(get_db)):
         scorecard = grounded_scorecard(app)
         letter = _ensure_forced_matches_mentioned(letter, scorecard)
         letter = _ensure_tool_gap_bridge_mentioned(letter, scorecard, profile)
+    letter = tone_down(letter)
     app.cover_letter = letter
     db.commit()
     persist_application_files(db, app_id)
@@ -1019,6 +1038,7 @@ async def generate_tailored_cv(app_id: int, db: Session = Depends(get_db)):
         in_progress_certs=in_progress_cert_names(profile),
         former_employers=former_employer_names(profile),
     ))
+    content = tone_down(content)
     app.tailored_cv = content
     db.commit()
     persist_application_files(db, app_id)
