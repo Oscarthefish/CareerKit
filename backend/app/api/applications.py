@@ -793,6 +793,61 @@ async def generate_cover_letter(app_id: int, db: Session = Depends(get_db)):
     return {"cover_letter": letter}
 
 
+@router.get("/{app_id}/cover-letter/review-prompt")
+def cover_letter_review_prompt(app_id: int, db: Session = Depends(get_db)):
+    """A self-contained prompt for reviewing and rewriting the current cover
+    letter in an external assistant (e.g. ChatGPT). Nothing is sent anywhere -
+    the user copies it. Background facts come only from employer-facing
+    material (the Custom/Tailored CV, else the cv_safe profile summary), so
+    nothing marked confidential ends up in the prompt."""
+    app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not (app.cover_letter or "").strip():
+        raise HTTPException(status_code=400, detail="Generate or write a cover letter first.")
+    if not (app.job_description_raw or "").strip():
+        raise HTTPException(status_code=400, detail="This job has no advert text to review against.")
+
+    background = (app.custom_cv or app.tailored_cv or "").strip()
+    # The name/contact header isn't needed to rewrite a letter - keep personal
+    # details out of a prompt that's going to a third-party service.
+    first_section = background.find("\n## ")
+    if background.startswith("## "):
+        first_section = 0
+    background = background[first_section:].strip() if first_section >= 0 else ""
+    if not background:
+        background = (build_profile_summary(db, mode="cv_safe").get("professional_summary") or "").strip()
+    scorecard = grounded_scorecard(app) if app.match_scorecard else None
+    # A "do not claim" item the background itself evidences (e.g. "SIEMs" when
+    # the CV lists Splunk ES investigations) would make the reviewer strip out
+    # real experience - only pass on the ones the background doesn't mention.
+    bg_lower = background.lower()
+    do_not_claim = [
+        c for c in (scorecard or {}).get("do_not_claim", [])
+        if str(c).strip() and not re.search(
+            r"\b" + re.escape(re.sub(r"(?i)s$", "", str(c).strip()).lower()) + r"s?\b", bg_lower)
+    ]
+    banned = get_banned_phrases_list(db)
+
+    company = _company_display(app)
+    role = app.role or "role"
+    role_line = f"{role} role at {company}" if company and company != "the company" else f"{role} role"
+    greeting = f"Dear {app.recruiter_name.strip()}" if (app.recruiter_name or "").strip() else "Kia ora"
+
+    prompt = fill_prompt(
+        "cover_letter_review_external",
+        ROLE_LINE=role_line,
+        GREETING=greeting,
+        BANNED_PHRASES=("- Also avoid these phrases: " + "; ".join(f'"{p}"' for p in banned)) if banned else "",
+        JOB_DESCRIPTION=app.job_description_raw.strip(),
+        COVER_LETTER=app.cover_letter.strip(),
+        BACKGROUND=background or "(see the draft letter)",
+        DO_NOT_CLAIM=("\n=== DO NOT CLAIM (not supported by my background) ===\n"
+                      + "\n".join(f"- {c}" for c in do_not_claim)) if do_not_claim else "",
+    )
+    return {"prompt": re.sub(r"\n{3,}", "\n\n", prompt).strip() + "\n"}
+
+
 class CVNotesRequest(BaseModel):
     pass
 

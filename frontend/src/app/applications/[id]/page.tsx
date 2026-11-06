@@ -6,6 +6,7 @@ import AppShell from '@/components/AppShell'
 import AIButton from '@/components/AIButton'
 import FileUpload from '@/components/FileUpload'
 import BannedPhrasesWidget from '@/components/BannedPhrasesWidget'
+import ExternalReviewPrompt from '@/components/ExternalReviewPrompt'
 import CVLayoutPanel from '@/components/CVLayoutPanel'
 import EvidenceFeedbackWidget from '@/components/EvidenceFeedbackWidget'
 import Tabs from '@/components/ui/Tabs'
@@ -956,15 +957,16 @@ function TabCoverLetter({ app, refresh, appId }: { app: JobApplication; refresh:
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex gap-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex flex-wrap gap-2 flex-1">
           <AIButton label="Regenerate" loadingLabel="Writing..." onClick={async () => { await generateCoverLetter(appId); refresh() }} variant="secondary" />
           {!editing && <button onClick={() => { setValue(app.cover_letter || ''); setEditing(true) }} className="btn-secondary">Edit</button>}
+          {!editing && <ExternalReviewPrompt appId={appId} />}
         </div>
         <div className="flex gap-2">
-          <a href={exportApplication(appId, 'md', 'cover-letter')} download className="btn-ghost btn-sm">MD</a>
-          <a href={exportApplication(appId, 'docx', 'cover-letter')} download className="btn-ghost btn-sm">DOCX</a>
-          <a href={exportApplication(appId, 'pdf', 'cover-letter')} download className="btn-ghost btn-sm">PDF</a>
+          <a href={exportApplication(appId, 'md', 'cover-letter')} download className="btn-ghost btn-sm mt-1">MD</a>
+          <a href={exportApplication(appId, 'docx', 'cover-letter')} download className="btn-ghost btn-sm mt-1">DOCX</a>
+          <a href={exportApplication(appId, 'pdf', 'cover-letter')} download className="btn-ghost btn-sm mt-1">PDF</a>
         </div>
       </div>
 
