@@ -15,6 +15,7 @@ from ..services.profile_service import (
     build_profile_summary,
     compact_profile_for_prompt,
     former_employer_names,
+    has_current_role,
     get_banned_phrases_instruction,
     get_banned_phrases_list,
     in_progress_cert_names,
@@ -667,6 +668,7 @@ async def generate_custom_cv(app_id: int, db: Session = Depends(get_db)):
             flag_years_experience=True,
             in_progress_certs=in_progress_cert_names(profile),
             former_employers=former_employer_names(profile),
+            has_current_role=has_current_role(profile),
         ))
     except ValueError as e:
         raise HTTPException(
@@ -773,6 +775,29 @@ _LETTER_AI_TELLS = [
 ]
 
 
+def _unsupported_claim_skills(scorecard: dict | None, company: str | None) -> list[str]:
+    """Skills a cover letter must not claim as experience: the scorecard's
+    genuine and quick-learning gaps, strong matches demoted for unsupported
+    evidence, and do-not-claim items (except the employer's own name, which
+    the letter naturally mentions)."""
+    if not isinstance(scorecard, dict):
+        return []
+    out: list[str] = []
+    for key in ("genuine_gaps", "quick_learning_gaps"):
+        for item in scorecard.get(key) or []:
+            skill = item.get("skill") if isinstance(item, dict) else item
+            if skill:
+                out.append(str(skill))
+    for item in scorecard.get("partial_matches") or []:
+        if isinstance(item, dict) and "don't present it as a strength" in (item.get("gap") or "") and item.get("skill"):
+            out.append(str(item["skill"]))
+    company_l = (company or "").strip().lower()
+    for item in scorecard.get("do_not_claim") or []:
+        if str(item).strip() and str(item).strip().lower() != company_l:
+            out.append(str(item))
+    return list(dict.fromkeys(out))
+
+
 @router.post("/{app_id}/cover-letter")
 async def generate_cover_letter(app_id: int, db: Session = Depends(get_db)):
     app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
@@ -797,9 +822,12 @@ async def generate_cover_letter(app_id: int, db: Session = Depends(get_db)):
     letter = to_british(await provider.generate(
         prompt,
         banned_phrases=get_banned_phrases_list(db) + _LETTER_AI_TELLS,
+        unsupported_claims=_unsupported_claim_skills(grounded_scorecard(app) if app.match_scorecard else None, app.company),
+        max_corrections=3,
         flag_years_experience=True,
         in_progress_certs=in_progress_cert_names(profile),
         former_employers=former_employer_names(profile),
+        has_current_role=has_current_role(profile),
     ))
     if app.match_scorecard:
         scorecard = grounded_scorecard(app)
@@ -914,6 +942,7 @@ Candidate Profile Summary: {profile.get('professional_summary', '')}
         banned_phrases=get_banned_phrases_list(db),
         in_progress_certs=in_progress_cert_names(profile),
         former_employers=former_employer_names(profile),
+        has_current_role=has_current_role(profile),
     ))
     app.cv_adjustment_notes = notes
     db.commit()
@@ -1037,6 +1066,7 @@ async def generate_tailored_cv(app_id: int, db: Session = Depends(get_db)):
         flag_years_experience=True,
         in_progress_certs=in_progress_cert_names(profile),
         former_employers=former_employer_names(profile),
+        has_current_role=has_current_role(profile),
     ))
     content = tone_down(content)
     app.tailored_cv = content

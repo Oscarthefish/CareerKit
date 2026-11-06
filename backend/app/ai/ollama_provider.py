@@ -77,6 +77,22 @@ def _find_in_progress_cert_claims(text: str, in_progress_certs: list[str]) -> li
     return found
 
 
+_CURRENT_ROLE_PATTERN = re.compile(
+    r"\b(my current (?:role|position|job|employer)|in my current|i currently work|currently employed|"
+    r"i am currently (?:a|an|the|working)|in my present role)\b",
+    re.IGNORECASE,
+)
+
+
+def _find_current_role_claims(text: str, has_current_role) -> list[str]:
+    """No role in the profile is current (e.g. after a redundancy), yet the
+    text says "in my current role as..." without naming the employer - which
+    _find_current_employer_mismatch can't see."""
+    if has_current_role is not False:
+        return []
+    return [m.group(0) for m in _CURRENT_ROLE_PATTERN.finditer(text)]
+
+
 def _find_current_employer_mismatch(text: str, former_employers: list[str]) -> list[str]:
     """The profile marks is_current=False for a former employer (e.g. after a
     redundancy), but a model routinely still writes "my current role at X"."""
@@ -91,6 +107,124 @@ def _find_current_employer_mismatch(text: str, former_employers: list[str]) -> l
                 found.append(employer)
                 break
     return found
+
+
+# Claiming language: a sentence with one of these is asserting the candidate
+# HAS the skill. Hedges mark an honest statement about a gap or an interest.
+_CLAIM_PATTERN = re.compile(
+    r"\b(experience|experienced|expertise|expert|proficien\w*|skilled|track record|hands-on|"
+    r"ability to|capable of|strong background|conducted|performed|carried out)\b",
+    re.IGNORECASE,
+)
+_HEDGE_PATTERN = re.compile(
+    r"(n't|\bnot\b|\bno\b|\balthough\b|\bwhile i\b|\bkeen\b|\beager\b|\bdevelop|\blearn|\btraining\b|"
+    r"\btrained\b|\bstudy|\bfoundation\b|\btowards\b|\btransferable\b|\bnew to\b|\binterest|\bgrow|"
+    r"\bexposure\b|\bfamiliar|\bnext step\b|\bbuild on\b|\badjacent\b|\bbridge\b)",
+    re.IGNORECASE,
+)
+# "the Digital Forensics Specialist role" names the job, it doesn't claim the skill.
+_JOB_TITLE_PATTERN = re.compile(
+    r"(?:\b[A-Z][\w/&-]*\s+){1,5}(?:Specialist|Analyst|Engineer|Manager|Lead|Consultant|Officer|"
+    r"Investigator|Examiner|Architect|Administrator)\b"
+)
+_CLAIM_GENERIC_WORDS = {
+    "tools", "tool", "platforms", "platform", "skills", "skill", "experience", "knowledge",
+    "technologies", "systems", "software", "solutions", "ability", "understanding", "strong",
+    "and", "the", "for", "with", "based", "using", "of", "in", "or",
+}
+
+
+def _claim_words(skill: str) -> list[str]:
+    core = re.sub(r"\(.*?\)", " ", skill or "")
+    return [w for w in re.findall(r"[a-z0-9]+", core.lower()) if len(w) > 2 and w not in _CLAIM_GENERIC_WORDS]
+
+
+def _word_in(word: str, words: set[str]) -> bool:
+    # "forensic" ~ "forensics", "investigate" ~ "investigation": 6+ shared chars.
+    for w in words:
+        n = 0
+        for a, b in zip(word, w):
+            if a != b:
+                break
+            n += 1
+        if w == word or n >= 6 or (n >= 4 and n == min(len(w), len(word))):
+            return True
+    return False
+
+
+def _find_unsupported_claims(text: str, unsupported: list[str]) -> list[str]:
+    """Skills the Match Scorecard says the candidate does NOT have evidence
+    for (gaps, demoted matches, do-not-claim items) that a sentence still
+    claims as experience - e.g. "my experience in threat hunting and digital
+    forensics" for a Digital Forensics gap. Sentences that hedge honestly
+    ("haven't", "keen to develop", "an interest in", "training") are fine."""
+    if not unsupported:
+        return []
+    found = []
+    sentences = [s for s in _SENTENCE_SPLIT.split(text) if _CLAIM_PATTERN.search(s) and not _HEDGE_PATTERN.search(s)]
+    for skill in unsupported:
+        words = _claim_words(skill)
+        if not words or len(words) > 4:
+            continue
+        for sentence in sentences:
+            sentence_words = set(re.findall(r"[a-z0-9]+", _JOB_TITLE_PATTERN.sub(" ", sentence).lower()))
+            if all(_word_in(w, sentence_words) for w in words):
+                found.append(skill)
+                break
+    return found
+
+
+def _correction_note(found: dict[str, list[str]]) -> str:
+    note = ""
+    if found["banned"]:
+        note += (
+            "Your response used phrase(s) you were explicitly told never to use: "
+            + ", ".join(f'"{v}"' for v in found["banned"]) + ". "
+        )
+    if found["years"]:
+        note += (
+            "Your response also stated a fixed year-count of experience ("
+            + ", ".join(f'"{v}"' for v in found["years"]) + ") — you were told to "
+            "anchor experience to actual dates from the profile (e.g. \"since 2014\") "
+            "instead of a fixed number, since a fixed count is often wrong and goes "
+            "stale. Remove the year-count entirely and use an anchor date instead. "
+        )
+    if found["certs"]:
+        note += (
+            "Your response named the following certification(s) as if already held, "
+            "but the profile marks them as NOT YET OBTAINED (in progress): "
+            + ", ".join(f'"{v}"' for v in found["certs"]) + ". Either remove the claim "
+            "entirely, or if it is genuinely relevant, state clearly that the candidate "
+            "is currently studying towards / working towards it — never imply it is held. "
+        )
+    if found["employers"]:
+        note += (
+            "Your response described the following employer(s) as the candidate's "
+            "CURRENT role, but the profile marks them as a FORMER employer (not current): "
+            + ", ".join(f'"{v}"' for v in found["employers"]) + ". Rewrite using past "
+            "tense for that role (e.g. \"held the role of ... at ...\" or \"from ... to "
+            "...\") — never describe it as current. "
+        )
+    if found.get("current_role"):
+        note += (
+            "Your response described a CURRENT role ("
+            + ", ".join(f'"{v}"' for v in found["current_role"]) + "), but the candidate has no "
+            "current role - every role in the profile has ended. Use the past tense for every role "
+            "(e.g. \"in my previous role as...\", \"from 2022 to 2026 I...\"). "
+        )
+    if found["unsupported"]:
+        note += (
+            "Your response claimed experience, expertise or ability in the following, but the "
+            "candidate does NOT have evidence of it: "
+            + ", ".join(f'"{v}"' for v in found["unsupported"]) + ". Remove those claims. "
+            "If the role needs it, say honestly that it is an area the candidate is building "
+            "towards, and point instead to the real, related work they have done. "
+        )
+    return note + (
+        "Rewrite your FULL response from scratch fixing this, expressing the same "
+        "meaning in different, natural words. Output ONLY the corrected content, "
+        "nothing else."
+    )
 
 
 class OllamaProvider(AIProvider):
@@ -134,6 +268,9 @@ class OllamaProvider(AIProvider):
         flag_years_experience: bool = False,
         in_progress_certs: Optional[list[str]] = None,
         former_employers: Optional[list[str]] = None,
+        unsupported_claims: Optional[list[str]] = None,
+        max_corrections: int = 1,
+        has_current_role: Optional[bool] = None,
     ) -> str:
         # Every prompt template opens with persona/instruction framing
         # ("You are a senior CV writer..."). Smaller local models treat that as
@@ -157,52 +294,33 @@ class OllamaProvider(AIProvider):
         # do something is not reliable for free-form prose. Catching it after
         # the fact and forcing one corrective rewrite works far better than
         # any amount of extra wording in the instruction itself.
-        violations = list(_find_banned_violations(content, banned_phrases)) if banned_phrases else []
-        year_violations = _find_years_experience_claims(content) if flag_years_experience else []
-        cert_violations = _find_in_progress_cert_claims(content, in_progress_certs or [])
-        employer_violations = _find_current_employer_mismatch(content, former_employers or [])
+        def check(text: str) -> dict[str, list[str]]:
+            return {
+                "banned": list(_find_banned_violations(text, banned_phrases)) if banned_phrases else [],
+                "years": _find_years_experience_claims(text) if flag_years_experience else [],
+                "certs": _find_in_progress_cert_claims(text, in_progress_certs or []),
+                "employers": _find_current_employer_mismatch(text, former_employers or []),
+                "current_role": _find_current_role_claims(text, has_current_role),
+                "unsupported": _find_unsupported_claims(text, unsupported_claims or []),
+            }
 
-        if violations or year_violations or cert_violations or employer_violations:
-            note = ""
-            if violations:
-                note += (
-                    "Your response used phrase(s) you were explicitly told never to use: "
-                    + ", ".join(f'"{v}"' for v in violations) + ". "
-                )
-            if year_violations:
-                note += (
-                    "Your response also stated a fixed year-count of experience ("
-                    + ", ".join(f'"{v}"' for v in year_violations) + ") — you were told to "
-                    "anchor experience to actual dates from the profile (e.g. \"since 2014\") "
-                    "instead of a fixed number, since a fixed count is often wrong and goes "
-                    "stale. Remove the year-count entirely and use an anchor date instead. "
-                )
-            if cert_violations:
-                note += (
-                    "Your response named the following certification(s) as if already held, "
-                    "but the profile marks them as NOT YET OBTAINED (in progress): "
-                    + ", ".join(f'"{v}"' for v in cert_violations) + ". Either remove the claim "
-                    "entirely, or if it is genuinely relevant, state clearly that the candidate "
-                    "is currently studying towards / working towards it — never imply it is held. "
-                )
-            if employer_violations:
-                note += (
-                    "Your response described the following employer(s) as the candidate's "
-                    "CURRENT role, but the profile marks them as a FORMER employer (not current): "
-                    + ", ".join(f'"{v}"' for v in employer_violations) + ". Rewrite using past "
-                    "tense for that role (e.g. \"held the role of ... at ...\" or \"from ... to "
-                    "...\") — never describe it as current. "
-                )
-            note += (
-                "Rewrite your FULL response from scratch fixing this, expressing the same "
-                "meaning in different, natural words. Output ONLY the corrected content, "
-                "nothing else."
-            )
+        # Every rewrite is re-checked: a small model often fixes one problem
+        # and reintroduces another, or ignores the correction entirely. Keep
+        # the attempt with the fewest problems rather than blindly trusting
+        # the last one.
+        found = check(content)
+        best, best_count = content, sum(map(len, found.values()))
+        for _ in range(max(0, max_corrections)):
+            if best_count == 0:
+                break
             messages.append({"role": "assistant", "content": content})
-            messages.append({"role": "user", "content": note})
+            messages.append({"role": "user", "content": _correction_note(found)})
             content = await self._chat(messages)
-
-        return content
+            found = check(content)
+            count = sum(map(len, found.values()))
+            if count < best_count:
+                best, best_count = content, count
+        return best
 
     async def generate_json(
         self,
