@@ -12,7 +12,8 @@ When you rewrite it, please follow these rules:
 - Don't state a fixed number of years ("more than eight years"). Anchor to dates instead ("since 2016"), or leave it out.
 - If there's a gap, mention it once, briefly and confidently, in the middle of the letter, alongside the related experience I do have. Don't apologise for it, and never end the letter on it or on what I still need to learn. The closing paragraph should end on what I'd bring to the team, with a short, plain call to action rather than "I would welcome the opportunity to discuss how…".
 - Write the way a thoughtful person talks: first person, varied sentence length, contractions where they sound natural, and no stacked lists of three. Avoid AI-sounding words and transitions such as "furthermore", "moreover", "additionally", "aligns with", "a testament to", "honed", "delve", "leverage", "navigate", "robust", "dedicated to", "I bring", "keen eye" and "in today's landscape".
-- Only use experience, tools, certifications, dates and outcomes that appear in my draft or in my background below. Don't invent or exaggerate anything, including metrics, team sizes or results.
+- Only use experience, tools, certifications, dates and outcomes that appear in my draft, in my background, or in my full background below. Don't invent or exaggerate anything, including metrics, team sizes or results.
+- My background below is a CV already tailored to this specific role - lead with that. My full background further down is my complete work history and skills, included only so you can find something genuinely real to bridge a gap the tailored CV doesn't cover. Only reach for it where the advert asks for something the tailored CV doesn't address; don't use it to pad the letter with unrelated experience, and don't mention a tool or skill from it that reads as a better fit left out.
 - Don't claim experience with anything in the "Do not claim" list. Where the advert asks for something I don't have, you can present a genuinely related strength honestly as transferable, without implying I've done the thing itself.
 - Training, or something I'm currently studying, isn't the same as hands-on experience. Keep that distinction.
 - Use New Zealand / British English spelling and a direct, confident, human New Zealand professional tone. Not boastful, and no corporate buzzwords.
@@ -32,6 +33,9 @@ Return the review first, then the rewritten letter as plain text that's ready to
 === MY CURRENT DRAFT COVER LETTER ===
 {{COVER_LETTER}}
 
-=== MY BACKGROUND (the only facts you may draw on) ===
+=== MY BACKGROUND (tailored to this role - lead with this) ===
 {{BACKGROUND}}
+
+=== MY FULL BACKGROUND (complete work history - only draw on this to bridge a genuine gap, not to pad the letter) ===
+{{ADDITIONAL_BACKGROUND}}
 {{DO_NOT_CLAIM}}
