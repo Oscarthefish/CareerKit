@@ -57,6 +57,32 @@ class StripUnsupportedClaimsByLineTests(unittest.TestCase):
         )
         self.assertEqual(result, content)
 
+    def test_real_regression_catches_a_split_two_word_product_name(self):
+        # Real bug (application 17, Security Engineer role): JD requirements
+        # "Microsoft Azure experience" and "Microsoft 365 experience" produce
+        # candidates "Microsoft Azure" and "Microsoft 365", but the model
+        # wrote them run together on one line as "Microsoft 365 and Azure" -
+        # never the contiguous phrase "Microsoft Azure", and "Microsoft 365"
+        # alone was never even reached contiguously either. A literal
+        # substring check on either candidate misses this line entirely.
+        content = (
+            "## CORE CAPABILITIES\n"
+            "**Security Operations & Incident Response:** Deep SIEM and EDR experience.\n"
+            "**Cloud Security & Threat Intelligence:** I have experience with cloud "
+            "security platforms, including Microsoft 365 and Azure, and threat response.\n"
+            "## SELECTED TECHNOLOGIES\n"
+            "SIEM & Investigation: Splunk Enterprise Security\n"
+        )
+        result = _strip_unsupported_claims_by_line(
+            content,
+            self._profile(),
+            ["Microsoft Azure experience", "Microsoft 365 experience"],
+            "CORE CAPABILITIES",
+        )
+        self.assertNotIn("Microsoft 365", result)
+        self.assertNotIn("Azure", result)
+        self.assertIn("Deep SIEM and EDR experience.", result)
+
 
 class EnsureTwoParagraphProfileTests(unittest.TestCase):
     def test_real_xero_regression_splits_a_run_on_block_into_two_paragraphs(self):

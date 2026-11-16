@@ -619,7 +619,10 @@ def _force_correct_platforms_and_tools(content: str, tools_lines: list[str]) -> 
 
 
 _TERMINOLOGY_PAREN_PATTERN = re.compile(r"\(([^)]+)\)")
-_CONSECUTIVE_CAPS_PATTERN = re.compile(r"\b[A-Z][a-zA-Z0-9]*(?:\s+[A-Z][a-zA-Z0-9]*)+\b")
+# Subsequent words may start with a digit as well as a capital letter so a
+# versioned/numbered product name like "Microsoft 365" or "Office 365" is
+# captured, not just two Title-Case words - see _candidate_product_names.
+_CONSECUTIVE_CAPS_PATTERN = re.compile(r"\b[A-Z][a-zA-Z0-9]*(?:\s+[A-Z0-9][a-zA-Z0-9]*)+\b")
 
 
 def _candidate_product_names(jd_terminology: list[str]) -> list[str]:
@@ -648,6 +651,26 @@ def _candidate_product_names(jd_terminology: list[str]) -> list[str]:
                         names.append(piece)
         names.extend(_CONSECUTIVE_CAPS_PATTERN.findall(term))
     return names
+
+
+def _term_words_present(term: str, text: str) -> bool:
+    """A multi-word candidate name (e.g. "Microsoft Azure", extracted from a
+    JD requirement like "Microsoft Azure experience") needs to be caught even
+    when the model doesn't write the two words contiguously - observed in
+    practice: a real CORE CAPABILITIES line claimed "experience with cloud
+    security platforms, including Microsoft 365 and Azure", which contains
+    both unsupported product names but neither as the exact phrase a plain
+    substring check looks for ("Microsoft Azure" never appears contiguously,
+    and "Microsoft 365" alone was never an extracted candidate at all before
+    this). Requires every word of the candidate to appear somewhere in the
+    text as its own whole word, in any order - safe here because candidates
+    only ever come from _candidate_product_names (parenthetical JD asides or
+    2+-word Title-Case/numbered product names), never generic single
+    dictionary words."""
+    return all(
+        re.search(rf"\b{re.escape(word)}\b", text, re.IGNORECASE)
+        for word in term.split()
+    )
 
 
 def _strip_unsupported_profile_claims(content: str, profile: dict, jd_terminology: list[str]) -> str:
@@ -686,7 +709,7 @@ def _strip_unsupported_profile_claims(content: str, profile: dict, jd_terminolog
     sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", section_body)
     kept = [
         s for s in sentences
-        if not any(re.search(rf"\b{re.escape(term)}\b", s, re.IGNORECASE) for term in unsupported)
+        if not any(_term_words_present(term, s) for term in unsupported)
     ]
     new_body = " ".join(kept).strip()
     if not new_body:
@@ -770,7 +793,7 @@ def _strip_unsupported_claims_by_line(
     lines = section_body.split("\n")
     kept = [
         line for line in lines
-        if not any(re.search(rf"\b{re.escape(term)}\b", line, re.IGNORECASE) for term in unsupported)
+        if not any(_term_words_present(term, line) for term in unsupported)
     ]
     new_body = "\n".join(kept)
     if not new_body.strip():

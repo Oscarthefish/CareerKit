@@ -69,16 +69,16 @@ class CredentialEntryTests(unittest.TestCase):
     def test_groups_are_separate_and_honest(self):
         groups = credentials.group_entries(CERTS, TRAINING)
         self.assertEqual(groups["Certifications"], [
-            "Example Penetration Tester (EPT) — Example Body | 2018",
-            "Old Firewall Engineer (OFE) — Vendor Co | 2012 | Expired",
+            "Example Penetration Tester (EPT) — Example Body (2018)",
+            "Old Firewall Engineer (OFE) — Vendor Co (2012, Expired)",
         ])
         self.assertEqual(groups["Professional Training"], [
             "SANS SEC504 — Incident Handling Course",
-            "Platform Basics — Splunk | 2021",
+            "Platform Basics — Splunk (2021)",
         ])
         self.assertEqual(groups["Currently Studying"], [
-            "Big Security Credential (BSC) — Cert Org | In progress",
-            "SC-200: Security Operations Analyst — Microsoft Learn | In progress",
+            "Big Security Credential (BSC) — Cert Org (In progress)",
+            "SC-200: Security Operations Analyst — Microsoft Learn (In progress)",
         ])
 
     def test_never_claims_a_certification_is_active_or_current(self):
@@ -111,12 +111,12 @@ class LegacyConversionTests(unittest.TestCase):
     def test_pipe_and_semicolon_paragraphs_become_grouped_entries_without_loss(self):
         out = normalize_structure("# A\n\n" + self.CUSTOM, CERTS, TRAINING)
         for expected in ("#### Certifications", "#### Professional Training", "#### Currently Studying",
-                         "- Example Penetration Tester (EPT) — Example Body | 2018",
+                         "- Example Penetration Tester (EPT) — Example Body (2018)",
                          "- Hand Typed Cert, Somewhere, 2010",            # unknown: kept verbatim
                          "- SANS SEC504 — Incident Handling Course",
                          "- Unknown Course, Provider",                    # unknown: kept verbatim
-                         "- Big Security Credential (BSC) — Cert Org | In progress",
-                         "- SC-200: Security Operations Analyst — Microsoft Learn | In progress"):
+                         "- Big Security Credential (BSC) — Cert Org (In progress)",
+                         "- SC-200: Security Operations Analyst — Microsoft Learn (In progress)"):
             self.assertIn(expected, out)
 
     def test_master_cv_separate_sections_are_merged_in_place(self):
@@ -124,7 +124,7 @@ class LegacyConversionTests(unittest.TestCase):
               "## PROFESSIONAL TRAINING\n- Platform Basics, Splunk, 2021\n\n## EDUCATION\n- e\n")
         out = normalize_structure(md, CERTS, TRAINING)
         self.assertEqual(section_names(out), ["PROJECTS", "CERTIFICATIONS & TRAINING", "EDUCATION"])
-        self.assertIn("- Platform Basics — Splunk | 2021", out)
+        self.assertIn("- Platform Basics — Splunk (2021)", out)
 
     def test_idempotent(self):
         once = normalize_structure("# A\n\n" + self.CUSTOM, CERTS, TRAINING)
