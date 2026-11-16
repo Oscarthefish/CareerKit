@@ -802,6 +802,58 @@ def _strip_unsupported_claims_by_line(
     return content[:section_match.start(2)] + new_body + content[section_match.end(2):]
 
 
+# custom_cv_generate.md already tells the model not to turn hands-on use of a
+# cloud-*managed* security product (Cortex XDR, Cisco Umbrella, Cisco AMP -
+# all genuinely in the profile) into a claim about securing cloud
+# *infrastructure* itself (Azure/AWS IAM, network security groups, workload
+# protection) - a different discipline - but a local model has been observed
+# ignoring that instruction and writing a dedicated "Cloud Security
+# Experience" CORE CAPABILITIES group using exactly this jargon anyway, off
+# the back of a JD's generic "cloud security experience" requirement. These
+# phrases are specific enough that they're safe to strip outright rather
+# than needing the word-presence matching the JD-terminology checks use -
+# unlike "cloud" or "security" alone, nobody writes "cloud infrastructure
+# security" by coincidence while describing something else.
+_CLOUD_INFRASTRUCTURE_SECURITY_OVERCLAIM_PHRASES = (
+    "cloud security controls", "cloud infrastructure security", "cloud security platforms",
+    "cloud security posture", "cloud workload protection", "cloud security architecture",
+    "cloud native security",
+)
+# If the candidate's own data genuinely shows direct experience with a cloud
+# IaaS platform, the capability is real and this safety net should stand
+# back rather than second-guess it.
+_CLOUD_IAAS_EVIDENCE_TERMS = ("azure", "aws", "amazon web services", "google cloud platform", "gcp")
+
+
+def _strip_cloud_infrastructure_security_overclaim(content: str, profile: dict) -> str:
+    """Safety net: drops any CORE CAPABILITIES line asserting cloud
+    infrastructure security as a competency (see phrases above) unless the
+    profile has genuine cloud IaaS evidence. Confirmed with Jason directly:
+    his real cloud-related experience is administering cloud-managed
+    security products across a global estate, not securing cloud
+    infrastructure itself - the two read very differently in an interview."""
+    profile_blob = json.dumps(profile).lower()
+    if any(term in profile_blob for term in _CLOUD_IAAS_EVIDENCE_TERMS):
+        return content
+
+    pattern = re.compile(r"(^## CORE CAPABILITIES\s*\n)(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
+    section_match = pattern.search(content)
+    if not section_match:
+        return content
+    section_body = section_match.group(2)
+
+    lines = section_body.split("\n")
+    kept = [
+        line for line in lines
+        if not any(phrase in line.lower() for phrase in _CLOUD_INFRASTRUCTURE_SECURITY_OVERCLAIM_PHRASES)
+    ]
+    new_body = "\n".join(kept)
+    if not new_body.strip():
+        return content  # dropping every line would leave the section blank - leave as-is rather than blank it
+
+    return content[:section_match.start(2)] + new_body + content[section_match.end(2):]
+
+
 def _non_dataless_roles(work_experience: list[dict]) -> list[dict]:
     """custom_cv_generate.md's PROFESSIONAL EXPERIENCE excludes a role with no
     description and no key_responsibilities entirely - it belongs in
@@ -1111,6 +1163,7 @@ def apply_custom_cv_safety_nets(content: str, profile: dict, jd_terminology: lis
     content = _ensure_two_paragraph_profile(content)
     content = _normalize_core_capabilities(content, profile.get("platforms_and_tools_display", []))
     content = _strip_unsupported_claims_by_line(content, profile, jd_terminology or [], "CORE CAPABILITIES")
+    content = _strip_cloud_infrastructure_security_overclaim(content, profile)
     content = _strip_trailing_line_commas(content)
     non_dataless_roles = _non_dataless_roles(profile.get("work_experience", []))
     content = _force_selected_technologies(content, profile.get("platforms_and_tools_display", []))
