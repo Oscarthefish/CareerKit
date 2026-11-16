@@ -619,7 +619,10 @@ def _force_correct_platforms_and_tools(content: str, tools_lines: list[str]) -> 
 
 
 _TERMINOLOGY_PAREN_PATTERN = re.compile(r"\(([^)]+)\)")
-_CONSECUTIVE_CAPS_PATTERN = re.compile(r"\b[A-Z][a-zA-Z0-9]*(?:\s+[A-Z][a-zA-Z0-9]*)+\b")
+# Subsequent words may start with a digit as well as a capital letter so a
+# versioned/numbered product name like "Microsoft 365" or "Office 365" is
+# captured, not just two Title-Case words - see _candidate_product_names.
+_CONSECUTIVE_CAPS_PATTERN = re.compile(r"\b[A-Z][a-zA-Z0-9]*(?:\s+[A-Z0-9][a-zA-Z0-9]*)+\b")
 
 
 def _candidate_product_names(jd_terminology: list[str]) -> list[str]:
@@ -648,6 +651,26 @@ def _candidate_product_names(jd_terminology: list[str]) -> list[str]:
                         names.append(piece)
         names.extend(_CONSECUTIVE_CAPS_PATTERN.findall(term))
     return names
+
+
+def _term_words_present(term: str, text: str) -> bool:
+    """A multi-word candidate name (e.g. "Microsoft Azure", extracted from a
+    JD requirement like "Microsoft Azure experience") needs to be caught even
+    when the model doesn't write the two words contiguously - observed in
+    practice: a real CORE CAPABILITIES line claimed "experience with cloud
+    security platforms, including Microsoft 365 and Azure", which contains
+    both unsupported product names but neither as the exact phrase a plain
+    substring check looks for ("Microsoft Azure" never appears contiguously,
+    and "Microsoft 365" alone was never an extracted candidate at all before
+    this). Requires every word of the candidate to appear somewhere in the
+    text as its own whole word, in any order - safe here because candidates
+    only ever come from _candidate_product_names (parenthetical JD asides or
+    2+-word Title-Case/numbered product names), never generic single
+    dictionary words."""
+    return all(
+        re.search(rf"\b{re.escape(word)}\b", text, re.IGNORECASE)
+        for word in term.split()
+    )
 
 
 def _strip_unsupported_profile_claims(content: str, profile: dict, jd_terminology: list[str]) -> str:
@@ -686,7 +709,7 @@ def _strip_unsupported_profile_claims(content: str, profile: dict, jd_terminolog
     sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", section_body)
     kept = [
         s for s in sentences
-        if not any(re.search(rf"\b{re.escape(term)}\b", s, re.IGNORECASE) for term in unsupported)
+        if not any(_term_words_present(term, s) for term in unsupported)
     ]
     new_body = " ".join(kept).strip()
     if not new_body:
@@ -770,7 +793,59 @@ def _strip_unsupported_claims_by_line(
     lines = section_body.split("\n")
     kept = [
         line for line in lines
-        if not any(re.search(rf"\b{re.escape(term)}\b", line, re.IGNORECASE) for term in unsupported)
+        if not any(_term_words_present(term, line) for term in unsupported)
+    ]
+    new_body = "\n".join(kept)
+    if not new_body.strip():
+        return content  # dropping every line would leave the section blank - leave as-is rather than blank it
+
+    return content[:section_match.start(2)] + new_body + content[section_match.end(2):]
+
+
+# custom_cv_generate.md already tells the model not to turn hands-on use of a
+# cloud-*managed* security product (Cortex XDR, Cisco Umbrella, Cisco AMP -
+# all genuinely in the profile) into a claim about securing cloud
+# *infrastructure* itself (Azure/AWS IAM, network security groups, workload
+# protection) - a different discipline - but a local model has been observed
+# ignoring that instruction and writing a dedicated "Cloud Security
+# Experience" CORE CAPABILITIES group using exactly this jargon anyway, off
+# the back of a JD's generic "cloud security experience" requirement. These
+# phrases are specific enough that they're safe to strip outright rather
+# than needing the word-presence matching the JD-terminology checks use -
+# unlike "cloud" or "security" alone, nobody writes "cloud infrastructure
+# security" by coincidence while describing something else.
+_CLOUD_INFRASTRUCTURE_SECURITY_OVERCLAIM_PHRASES = (
+    "cloud security controls", "cloud infrastructure security", "cloud security platforms",
+    "cloud security posture", "cloud workload protection", "cloud security architecture",
+    "cloud native security",
+)
+# If the candidate's own data genuinely shows direct experience with a cloud
+# IaaS platform, the capability is real and this safety net should stand
+# back rather than second-guess it.
+_CLOUD_IAAS_EVIDENCE_TERMS = ("azure", "aws", "amazon web services", "google cloud platform", "gcp")
+
+
+def _strip_cloud_infrastructure_security_overclaim(content: str, profile: dict) -> str:
+    """Safety net: drops any CORE CAPABILITIES line asserting cloud
+    infrastructure security as a competency (see phrases above) unless the
+    profile has genuine cloud IaaS evidence. Confirmed with Jason directly:
+    his real cloud-related experience is administering cloud-managed
+    security products across a global estate, not securing cloud
+    infrastructure itself - the two read very differently in an interview."""
+    profile_blob = json.dumps(profile).lower()
+    if any(term in profile_blob for term in _CLOUD_IAAS_EVIDENCE_TERMS):
+        return content
+
+    pattern = re.compile(r"(^## CORE CAPABILITIES\s*\n)(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
+    section_match = pattern.search(content)
+    if not section_match:
+        return content
+    section_body = section_match.group(2)
+
+    lines = section_body.split("\n")
+    kept = [
+        line for line in lines
+        if not any(phrase in line.lower() for phrase in _CLOUD_INFRASTRUCTURE_SECURITY_OVERCLAIM_PHRASES)
     ]
     new_body = "\n".join(kept)
     if not new_body.strip():
@@ -1088,6 +1163,7 @@ def apply_custom_cv_safety_nets(content: str, profile: dict, jd_terminology: lis
     content = _ensure_two_paragraph_profile(content)
     content = _normalize_core_capabilities(content, profile.get("platforms_and_tools_display", []))
     content = _strip_unsupported_claims_by_line(content, profile, jd_terminology or [], "CORE CAPABILITIES")
+    content = _strip_cloud_infrastructure_security_overclaim(content, profile)
     content = _strip_trailing_line_commas(content)
     non_dataless_roles = _non_dataless_roles(profile.get("work_experience", []))
     content = _force_selected_technologies(content, profile.get("platforms_and_tools_display", []))

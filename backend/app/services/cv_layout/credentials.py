@@ -5,11 +5,11 @@ models/profile.py) rather than free text, as three compact groups:
 
     ## CERTIFICATIONS & TRAINING
     #### Certifications
-    - GIAC Penetration Tester (GPEN) — GIAC / SANS | 2018
+    - GIAC Penetration Tester (GPEN) — GIAC / SANS (2018)
     #### Professional Training
     - SANS SEC504 — Hacker Tools, Techniques, and Incident Handling
     #### Currently Studying
-    - Certified Information Systems Security Professional (CISSP) — ISC2 | In progress
+    - Certified Information Systems Security Professional (CISSP) — ISC2 (In progress)
 
 Honesty rules, all deliberate:
 - An awarded certification shows the year it was obtained, never "active" or
@@ -47,21 +47,29 @@ def _year(value) -> str:
     return str(value).strip() if value else ""
 
 
+def _with_status(head: str, status_parts: list[str]) -> str:
+    """Appends the status/date info (year, In progress, Expired, Retired) as
+    one trailing parenthetical rather than pipe-separated segments - "|" sits
+    too close visually to other punctuation in a dense CV line (reported
+    against "Microsoft Learn | In progress"), while parentheses read as a
+    clearly separate aside at a glance."""
+    status_parts = [p for p in status_parts if p]
+    return f"{head} ({', '.join(status_parts)})" if status_parts else head
+
+
 def cert_entry(cert: dict) -> str:
     name = (cert.get("name") or "").strip()
     issuer = (cert.get("issuer") or "").strip()
-    parts = [name + (SEP + issuer if issuer else "")]
+    head = name + (SEP + issuer if issuer else "")
     if cert.get("in_progress"):
-        parts.append("In progress")
-    else:
-        if _year(cert.get("date_obtained")):
-            parts.append(_year(cert.get("date_obtained")))
-        status = cert.get("status")
-        if status == "expired":
-            parts.append("Expired")
-        elif status == "retired_legacy":
-            parts.append("Retired")
-    return " | ".join(p for p in parts if p)
+        return _with_status(head, ["In progress"])
+    status_parts = [_year(cert.get("date_obtained"))]
+    status = cert.get("status")
+    if status == "expired":
+        status_parts.append("Expired")
+    elif status == "retired_legacy":
+        status_parts.append("Retired")
+    return _with_status(head, status_parts)
 
 
 def training_entry(training: dict) -> str:
@@ -76,12 +84,9 @@ def training_entry(training: dict) -> str:
         head = f"{m.group(1)}: {m.group(2).strip()}" + (SEP + provider if provider else "")
     else:
         head = title + (SEP + provider if provider and provider.lower() not in title.lower() else "")
-    parts = [head]
     if training.get("completion_status") in _IN_PROGRESS_TRAINING:
-        parts.append("In progress")
-    elif _year(training.get("date")):
-        parts.append(_year(training.get("date")))
-    return " | ".join(parts)
+        return _with_status(head, ["In progress"])
+    return _with_status(head, [_year(training.get("date"))])
 
 
 def group_entries(certifications: list[dict], training: list[dict]) -> dict[str, list[str]]:

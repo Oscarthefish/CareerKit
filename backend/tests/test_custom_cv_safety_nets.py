@@ -6,6 +6,7 @@ from app.api.cv import (
     _force_selected_technologies,
     _non_dataless_roles,
     _normalize_core_capabilities,
+    _strip_cloud_infrastructure_security_overclaim,
     _strip_unsupported_claims_by_line,
     apply_custom_cv_safety_nets,
 )
@@ -55,6 +56,84 @@ class StripUnsupportedClaimsByLineTests(unittest.TestCase):
         result = _strip_unsupported_claims_by_line(
             content, self._profile(), ["Microsoft Sentinel"], "CORE CAPABILITIES"
         )
+        self.assertEqual(result, content)
+
+    def test_real_regression_catches_a_split_two_word_product_name(self):
+        # Real bug (application 17, Security Engineer role): JD requirements
+        # "Microsoft Azure experience" and "Microsoft 365 experience" produce
+        # candidates "Microsoft Azure" and "Microsoft 365", but the model
+        # wrote them run together on one line as "Microsoft 365 and Azure" -
+        # never the contiguous phrase "Microsoft Azure", and "Microsoft 365"
+        # alone was never even reached contiguously either. A literal
+        # substring check on either candidate misses this line entirely.
+        content = (
+            "## CORE CAPABILITIES\n"
+            "**Security Operations & Incident Response:** Deep SIEM and EDR experience.\n"
+            "**Cloud Security & Threat Intelligence:** I have experience with cloud "
+            "security platforms, including Microsoft 365 and Azure, and threat response.\n"
+            "## SELECTED TECHNOLOGIES\n"
+            "SIEM & Investigation: Splunk Enterprise Security\n"
+        )
+        result = _strip_unsupported_claims_by_line(
+            content,
+            self._profile(),
+            ["Microsoft Azure experience", "Microsoft 365 experience"],
+            "CORE CAPABILITIES",
+        )
+        self.assertNotIn("Microsoft 365", result)
+        self.assertNotIn("Azure", result)
+        self.assertIn("Deep SIEM and EDR experience.", result)
+
+
+class StripCloudInfrastructureSecurityOverclaimTests(unittest.TestCase):
+    def _profile(self, extra_blob: str = "") -> dict:
+        return {
+            "skills": [{"name": "Cortex XDR"}, {"name": "Cisco Umbrella"}],
+            "notes": extra_blob,
+        }
+
+    def test_real_regression_drops_the_fabricated_cloud_infrastructure_group(self):
+        # Real bug (application 17, Security Engineer role): the model turned
+        # the JD's generic "cloud security experience" requirement into a
+        # dedicated capability group claiming cloud infrastructure security
+        # jargon the candidate has no evidence for - his real cloud-related
+        # experience is administering cloud-managed security PRODUCTS
+        # (Cortex XDR, Cisco Umbrella) across a global estate, confirmed
+        # directly with him as a different thing.
+        content = (
+            "## CORE CAPABILITIES\n"
+            "**Tooling & Automation:** Experience with Cortex XDR and Cisco Umbrella across a global estate.\n"
+            "**Cloud Security Experience:** Cloud security experience with a focus on cloud security "
+            "controls, identity and access management, and cloud infrastructure security.\n"
+            "## SELECTED TECHNOLOGIES\n"
+            "Endpoint & Detection: Cortex XDR\n"
+        )
+        result = _strip_cloud_infrastructure_security_overclaim(content, self._profile())
+        self.assertNotIn("Cloud Security Experience", result)
+        self.assertNotIn("cloud infrastructure security", result)
+        self.assertIn("Experience with Cortex XDR and Cisco Umbrella across a global estate.", result)
+
+    def test_leaves_content_unchanged_when_candidate_has_genuine_cloud_iaas_evidence(self):
+        content = (
+            "## CORE CAPABILITIES\n"
+            "**Cloud Security Experience:** Cloud infrastructure security work across Azure tenants.\n"
+        )
+        profile = self._profile()
+        profile["skills"].append({"name": "Microsoft Azure"})
+        result = _strip_cloud_infrastructure_security_overclaim(content, profile)
+        self.assertEqual(result, content)
+
+    def test_never_blanks_the_whole_section(self):
+        content = "## CORE CAPABILITIES\n**Cloud:** Cloud infrastructure security everywhere.\n"
+        result = _strip_cloud_infrastructure_security_overclaim(content, self._profile())
+        self.assertEqual(result, content)
+
+    def test_leaves_unrelated_cloud_mentions_alone(self):
+        content = (
+            "## CORE CAPABILITIES\n"
+            "**Security Operations:** Investigated phishing, malware and cloud-related events across SIEM.\n"
+        )
+        result = _strip_cloud_infrastructure_security_overclaim(content, self._profile())
         self.assertEqual(result, content)
 
 
