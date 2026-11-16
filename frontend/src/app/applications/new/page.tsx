@@ -1,10 +1,14 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import AppShell from '@/components/AppShell'
 import PageHeader from '@/components/PageHeader'
 import FileUpload from '@/components/FileUpload'
-import { createApplication, uploadJobDescription, analyzeJob } from '@/lib/api'
+import { statusLabel } from '@/components/ui/JobStatus'
+import { createApplication, uploadJobDescription, analyzeJob, checkDuplicateApplication } from '@/lib/api'
+
+type Duplicate = { id: number; company: string; role: string; status: string; reason: string }
 
 export default function NewApplicationPage() {
   const router = useRouter()
@@ -14,6 +18,8 @@ export default function NewApplicationPage() {
   const [details, setDetails] = useState({ company: '', role: '', recruiter_name: '', location: '', work_type: '', salary_range: '', job_url: '' })
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [duplicates, setDuplicates] = useState<Duplicate[]>([])
+  const [dismissedDuplicates, setDismissedDuplicates] = useState(false)
 
   const handlePasteNext = () => {
     if (!jdText.trim()) {
@@ -23,6 +29,34 @@ export default function NewApplicationPage() {
     setError(null)
     setStep('details')
   }
+
+  // Jobs get relisted, and the same ad often turns up on more than one site
+  // (LinkedIn, Seek, the employer's own page) - a quick, non-blocking heads
+  // up here can save tailoring a CV/cover letter for something already
+  // being tracked. Debounced and re-checked as company/role/link are typed.
+  useEffect(() => {
+    if (step !== 'details') return
+    const hasSignal = details.company.trim() || details.job_url.trim() || jdText.trim().length > 150
+    if (!hasSignal) {
+      setDuplicates([])
+      return
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res: any = await checkDuplicateApplication({
+          company: details.company || undefined,
+          role: details.role || undefined,
+          job_url: details.job_url || undefined,
+          job_description_raw: jdText || undefined,
+        })
+        setDuplicates(res.duplicates || [])
+        setDismissedDuplicates(false)
+      } catch {
+        // Non-critical - a failed check should never block creating the application.
+      }
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [step, details.company, details.role, details.job_url, jdText])
 
   const handleCreate = async () => {
     setCreating(true)
@@ -138,6 +172,30 @@ export default function NewApplicationPage() {
                 ? `Job description ready (${jdText.length.toLocaleString()} characters). Analysis will run automatically.`
                 : 'No job description. You can add it later on the application page.'}
             </div>
+
+            {duplicates.length > 0 && !dismissedDuplicates && (
+              <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-sm space-y-2">
+                <p className="font-medium text-amber-800">
+                  This looks like something you may already have tracked:
+                </p>
+                <ul className="space-y-1">
+                  {duplicates.map((d) => (
+                    <li key={d.id} className="text-amber-700">
+                      <Link href={`/applications/${d.id}`} className="underline hover:no-underline" target="_blank">
+                        {d.role || 'Untitled role'} at {d.company || 'Unknown company'}
+                      </Link>
+                      {' '}({statusLabel(d.status)}, {d.reason})
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => setDismissedDuplicates(true)}
+                  className="text-xs text-amber-700 underline hover:no-underline"
+                >
+                  This is a different job, continue anyway
+                </button>
+              </div>
+            )}
 
             <div className="card p-5 space-y-4">
               <h3 className="font-semibold text-gray-900 text-sm">Optional details</h3>

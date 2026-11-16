@@ -211,6 +211,8 @@ export const updateApplication = (id: number, data: object) =>
   request(`/api/applications/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 export const deleteApplication = (id: number) =>
   request(`/api/applications/${id}`, { method: 'DELETE' })
+export const checkDuplicateApplication = (data: object) =>
+  request('/api/applications/check-duplicate', { method: 'POST', body: JSON.stringify(data) })
 
 export const uploadJobDescription = async (id: number, file: File) => {
   const fd = new FormData()
