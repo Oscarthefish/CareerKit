@@ -349,6 +349,126 @@ def create_application(body: ApplicationCreate, db: Session = Depends(get_db)):
     return _serialize(app)
 
 
+class DuplicateCheckRequest(BaseModel):
+    company: Optional[str] = None
+    role: Optional[str] = None
+    job_url: Optional[str] = None
+    job_description_raw: Optional[str] = None
+    exclude_id: Optional[int] = None
+
+
+def _normalize_company_for_compare(name: str | None) -> str:
+    return re.sub(r"\s+", " ", (name or "").strip().lower())
+
+
+def _normalize_url_for_compare(url: str | None) -> str:
+    """Drops scheme, a leading "www.", and query/tracking params and a
+    trailing slash, so the same listing linked with vs without https://, a
+    "www." prefix, a trailing slash, or a "?utm_source=..." tag still
+    compares equal."""
+    url = (url or "").strip()
+    if not url:
+        return ""
+    parsed = urlparse(url if urlparse(url).scheme else "https://" + url.lstrip("/"))
+    netloc = re.sub(r"^www\.", "", parsed.netloc.lower())
+    return f"{netloc}{parsed.path.rstrip('/').lower()}"
+
+
+_DUPLICATE_CHECK_STOPWORDS = {
+    "a", "an", "the", "and", "or", "for", "of", "in", "to", "at", "on", "with",
+    "is", "are", "we", "you", "our", "your", "will", "this", "that", "as", "be",
+}
+
+
+def _significant_word_set(text: str | None, min_len: int = 3) -> set[str]:
+    words = re.findall(r"[a-z0-9]+", (text or "").lower())
+    return {w for w in words if len(w) >= min_len and w not in _DUPLICATE_CHECK_STOPWORDS}
+
+
+def _word_overlap_ratio(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / min(len(a), len(b))
+
+
+_TITLE_SPECIALISATION_SEPARATOR = re.compile(r"[-–—:|]\s*(.+)$")
+
+
+def _are_different_specialisations_of_the_same_title(role_a: str, role_b: str) -> bool:
+    """Real false positive: "Principal Protective Security Risk Advisor -
+    Cyber" vs "... - PHYSEC/PERSEC" scores a high word-overlap ratio since
+    they share a long base title, but the "- Cyber" / "- PHYSEC/PERSEC"
+    tail is precisely the part that makes them two deliberately different
+    roles, not a relisted duplicate. When both titles use a
+    "Base - Specialisation" shape and the specialisation words don't
+    overlap at all, trust that split over the raw ratio."""
+    tail_a = _TITLE_SPECIALISATION_SEPARATOR.search(role_a or "")
+    tail_b = _TITLE_SPECIALISATION_SEPARATOR.search(role_b or "")
+    if not tail_a or not tail_b:
+        return False
+    words_a = _significant_word_set(tail_a.group(1))
+    words_b = _significant_word_set(tail_b.group(1))
+    return bool(words_a) and bool(words_b) and not (words_a & words_b)
+
+
+def _find_possible_duplicate_applications(
+    db: Session, company: str | None, role: str | None,
+    job_url: str | None, job_description_raw: str | None, exclude_id: int | None = None,
+) -> list[dict]:
+    """Jobs get relisted, and the same ad often turns up on more than one
+    platform (LinkedIn, Seek, the employer's own site) - a quick heads-up
+    here can save tailoring a CV/cover letter for something already being
+    tracked. Deliberately conservative: only flags an exact same-link match,
+    or a same-company match paired with either a similar role title or
+    substantial job-description overlap - never on job-description
+    similarity alone, since two unrelated ads in the same field share a lot
+    of generic boilerplate language."""
+    norm_url = _normalize_url_for_compare(job_url)
+    norm_company = _normalize_company_for_compare(company)
+    if not norm_url and not norm_company:
+        return []
+    role_words = _significant_word_set(role)
+    jd_words = _significant_word_set(job_description_raw, min_len=4)
+
+    matches = []
+    for other in db.query(JobApplication).all():
+        if exclude_id and other.id == exclude_id:
+            continue
+        reason = None
+        if norm_url and _normalize_url_for_compare(other.job_url) == norm_url:
+            reason = "same job link"
+        elif norm_company and _normalize_company_for_compare(other.company) == norm_company:
+            other_role_words = _significant_word_set(other.role)
+            if (
+                role_words and other_role_words
+                and _word_overlap_ratio(role_words, other_role_words) >= 0.6
+                and not _are_different_specialisations_of_the_same_title(role or "", other.role or "")
+            ):
+                reason = "same company and a very similar role title"
+            elif len(jd_words) >= 60:
+                other_jd_words = _significant_word_set(other.job_description_raw, min_len=4)
+                if len(other_jd_words) >= 60 and _word_overlap_ratio(jd_words, other_jd_words) >= 0.7:
+                    reason = "same company and a very similar job description"
+        if reason:
+            matches.append({
+                "id": other.id,
+                "company": other.company,
+                "role": other.role,
+                "status": other.status,
+                "created_at": other.created_at.isoformat() if other.created_at else None,
+                "reason": reason,
+            })
+    return matches
+
+
+@router.post("/check-duplicate")
+def check_duplicate_application(body: DuplicateCheckRequest, db: Session = Depends(get_db)):
+    duplicates = _find_possible_duplicate_applications(
+        db, body.company, body.role, body.job_url, body.job_description_raw, body.exclude_id,
+    )
+    return {"duplicates": duplicates}
+
+
 @router.get("/{app_id}")
 def get_application(app_id: int, db: Session = Depends(get_db)):
     app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
