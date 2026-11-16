@@ -845,8 +845,10 @@ def cover_letter_review_prompt(app_id: int, db: Session = Depends(get_db)):
     """A self-contained prompt for reviewing and rewriting the current cover
     letter in an external assistant (e.g. ChatGPT). Nothing is sent anywhere -
     the user copies it. Background facts come only from employer-facing
-    material (the Custom/Tailored CV, else the cv_safe profile summary), so
-    nothing marked confidential ends up in the prompt."""
+    material (the Custom/Tailored CV as the primary guide, plus the full
+    cv_safe profile as a secondary pool to bridge a gap the tailored CV's own
+    per-job selection left out), so nothing marked confidential ends up in
+    the prompt either way."""
     app = db.query(JobApplication).filter(JobApplication.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="Not found")
@@ -862,13 +864,19 @@ def cover_letter_review_prompt(app_id: int, db: Session = Depends(get_db)):
     if background.startswith("## "):
         first_section = 0
     background = background[first_section:].strip() if first_section >= 0 else ""
+    full_profile = build_profile_summary(db, mode="cv_safe")
     if not background:
-        background = (build_profile_summary(db, mode="cv_safe").get("professional_summary") or "").strip()
+        background = (full_profile.get("professional_summary") or "").strip()
+    # The Custom CV is a per-job SUBSET of the full profile (see
+    # select_evidence_for_cv) - some genuinely real experience may not have
+    # made that cut. Pass the full cv_safe profile too, clearly labelled as a
+    # secondary pool for bridging a gap, not primary material to summarise.
+    additional_background = json.dumps(compact_profile_for_prompt(full_profile), indent=2)
     scorecard = grounded_scorecard(app) if app.match_scorecard else None
-    # A "do not claim" item the background itself evidences (e.g. "SIEMs" when
-    # the CV lists Splunk ES investigations) would make the reviewer strip out
-    # real experience - only pass on the ones the background doesn't mention.
-    bg_lower = background.lower()
+    # A "do not claim" item either background already evidences (e.g. "SIEMs"
+    # when the CV lists Splunk ES investigations) would make the reviewer
+    # strip out real experience - only pass on the ones neither mentions.
+    bg_lower = (background + " " + additional_background).lower()
     do_not_claim = [
         c for c in (scorecard or {}).get("do_not_claim", [])
         if str(c).strip() and not re.search(
@@ -889,7 +897,8 @@ def cover_letter_review_prompt(app_id: int, db: Session = Depends(get_db)):
         JOB_DESCRIPTION=app.job_description_raw.strip(),
         COVER_LETTER=app.cover_letter.strip(),
         BACKGROUND=background or "(see the draft letter)",
-        DO_NOT_CLAIM=("\n=== DO NOT CLAIM (not supported by my background) ===\n"
+        ADDITIONAL_BACKGROUND=additional_background,
+        DO_NOT_CLAIM=("\n=== DO NOT CLAIM (not supported by either background) ===\n"
                       + "\n".join(f"- {c}" for c in do_not_claim)) if do_not_claim else "",
     )
     return {"prompt": re.sub(r"\n{3,}", "\n\n", prompt).strip() + "\n"}

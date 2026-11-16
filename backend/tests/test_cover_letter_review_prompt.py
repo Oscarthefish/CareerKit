@@ -9,6 +9,7 @@ import app.models  # noqa: F401 - registers every table on Base
 from app.api.applications import cover_letter_review_prompt
 from app.core.database import Base
 from app.models.job import JobApplication
+from app.models.profile import Skill
 
 ADVERT = "Security Analyst. You will triage SIEM alerts, run investigations and write reports. AWS experience desirable."
 CV = (
@@ -69,6 +70,48 @@ class CoverLetterReviewPromptTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             self._prompt()
         self.assertEqual(ctx.exception.status_code, 400)
+
+
+class FullBackgroundBridgeTests(unittest.TestCase):
+    """The tailored CV is a per-job SUBSET of the full profile - real
+    experience that didn't make that cut (e.g. a skill this particular
+    custom CV never mentions) should still be available to the external
+    reviewer as a secondary pool, not lost entirely."""
+
+    def setUp(self):
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        self.db = sessionmaker(bind=engine)()
+        self.db.add(Skill(name="AWS", category="tool", confidence="confirmed_hands_on"))
+        self.db.commit()
+        scorecard = {"do_not_claim": ["AWS"], "strong_matches": []}
+        self.app = JobApplication(
+            session_folder="test", company="Acme Bank", role="Security Analyst", job_description_raw=ADVERT,
+            cover_letter="Dear Hiring Manager,\n\nI am applying for the role.", custom_cv=CV,
+            match_scorecard=json.dumps(scorecard),
+        )
+        self.db.add(self.app)
+        self.db.commit()
+
+    def tearDown(self):
+        self.db.close()
+
+    def _prompt(self):
+        return cover_letter_review_prompt(self.app.id, self.db)["prompt"]
+
+    def test_full_background_section_is_included_and_labelled_secondary(self):
+        p = self._prompt()
+        self.assertIn("MY FULL BACKGROUND", p)
+        self.assertIn("AWS", p.split("MY FULL BACKGROUND", 1)[1])
+
+    def test_do_not_claim_drops_an_item_only_the_full_background_evidences(self):
+        # AWS isn't mentioned anywhere in the tailored Custom CV (CV fixture
+        # above), only in the full profile's skill record - it must still be
+        # excluded from DO NOT CLAIM, not flagged as a gap the reviewer
+        # should avoid, now that the full background can see it.
+        p = self._prompt()
+        section = p.split("=== DO NOT CLAIM", 1)[1] if "=== DO NOT CLAIM" in p else ""
+        self.assertNotIn("- AWS", section)
 
 
 if __name__ == "__main__":
