@@ -15,7 +15,7 @@ _INTENSIFIERS = r"(?:highly|extremely|exceptionally|incredibly|very|deeply|supre
 _ADJECTIVES = r"(skilled|experienced|proficient|knowledgeable|accomplished|capable|competent|qualified)"
 
 # "highly skilled" / "highly-skilled" -> "skilled"
-_INTENSIFIED_RE = re.compile(rf"\b{_INTENSIFIERS}[- ]{_ADJECTIVES}\b", re.IGNORECASE)
+_INTENSIFIED_RE = re.compile(rf"\b(?:(an?)\s+)?{_INTENSIFIERS}[- ]{_ADJECTIVES}\b", re.IGNORECASE)
 # Modifiers removed outright: "(an) expert-level X" -> "(a/an) X",
 # "a world-class team" -> "a team".
 _REMOVABLE_RE = re.compile(
@@ -41,7 +41,13 @@ def tone_down(text: str | None) -> str | None:
     if not text:
         return text
 
-    text = _INTENSIFIED_RE.sub(lambda m: _match_case(m.group(0), m.group(1).lower()), text)
+    def _drop_intensifier(m: re.Match) -> str:
+        # "a highly experienced" -> "an experienced": the article must follow the new first word.
+        article, adjective = m.group(1), m.group(2).lower()
+        if article:
+            return _match_case(article, _article_for(adjective)) + " " + adjective
+        return _match_case(m.group(0), adjective)
+    text = _INTENSIFIED_RE.sub(_drop_intensifier, text)
 
     def _remove_modifier(m: re.Match) -> str:
         article, nxt = m.group(1), m.group(2)

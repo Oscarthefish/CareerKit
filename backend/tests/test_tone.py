@@ -13,6 +13,14 @@ class ToneDownTests(unittest.TestCase):
         self.check("I am a highly-skilled and highly experienced SOC lead.", "I am a skilled and experienced SOC lead.")
         self.check("Extremely proficient with Splunk.", "Proficient with Splunk.")
 
+    def test_article_follows_the_new_first_word(self):
+        # Real regression: "As a highly experienced ..." became "As a experienced ...".
+        self.check("As a highly experienced Security Operations professional",
+                   "As an experienced Security Operations professional")
+        self.check("an extremely skilled analyst", "a skilled analyst")
+        self.check("A highly skilled analyst", "A skilled analyst")
+        self.check("An extremely experienced lead", "An experienced lead")
+
     def test_expert_level_is_removed_with_article_fixed(self):
         self.check("Expert-level knowledge of Splunk.", "Knowledge of Splunk.")
         self.check("with expert level knowledge of EDR", "with knowledge of EDR")
