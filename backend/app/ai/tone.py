@@ -37,6 +37,8 @@ _MY_EXPERTISE_RE = re.compile(r"\b(my|our)\s+expertise\b|\b(areas?)\s+of\s+exper
 # "a wealth of experience" -> "broad experience"; "extensive experience" -> "experience"
 _WEALTH_RE = re.compile(r"\ba\s+wealth\s+of\s+(\w+)", re.IGNORECASE)
 _EXTENSIVE_RE = re.compile(r"\bextensive\s+(experience)\b", re.IGNORECASE)
+# "a proven/strong/excellent track record of" -> "a track record of"
+_TRACK_RECORD_RE = re.compile(r"\b(?:proven|strong|excellent|demonstrated|solid)\s+(track\s+record)\b", re.IGNORECASE)
 # "...experience to the table" -> "...experience"
 _TO_THE_TABLE_RE = re.compile(r"\s+to\s+the\s+table\b", re.IGNORECASE)
 
@@ -85,6 +87,7 @@ def tone_down(text: str | None) -> str | None:
     text = _WEALTH_RE.sub(lambda m: _match_case(m.group(0), f"broad {m.group(1)}"), text)
     text = _EXTENSIVE_RE.sub(lambda m: _match_case(m.group(0), m.group(1).lower()), text)
     text = _TO_THE_TABLE_RE.sub("", text)
+    text = _TRACK_RECORD_RE.sub(lambda m: _match_case(m.group(0), m.group(1).lower()), text)
     text = _EXPERT_IN_RE.sub(lambda m: _match_case(m.group(0), f"experienced {m.group(1).lower()}"
                                                    if m.group(1).lower() != "at" else "skilled at"), text)
     return text

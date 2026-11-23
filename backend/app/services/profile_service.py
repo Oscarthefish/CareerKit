@@ -185,6 +185,9 @@ _BASE_BANNED_PHRASES = [
         "to the table",
         "operations expert",
         "security expert",
+        "proven track record",
+        "a strong understanding of how to",
+        "staying up-to-date with the latest",
 ]
 
 
