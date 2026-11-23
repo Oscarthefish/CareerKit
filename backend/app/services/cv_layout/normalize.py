@@ -98,6 +98,10 @@ def normalize_structure(md: str, certifications: list[dict] | None = None,
     if not sections:
         return md
     sections = _restructure_credentials(sections, certifications, training)
+    # A heading with nothing under it (e.g. PROJECTS when no project was
+    # selected) would print as a bare rule - drop it. Runs after credentials
+    # are rebuilt, so an empty CERTIFICATIONS heading that gets filled stays.
+    sections = [(h, body) for h, body in sections if body.strip()]
     return join_sections(preamble, sections)
 
 

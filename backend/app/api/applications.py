@@ -29,7 +29,7 @@ from ..parsers.router import extract_text, SUPPORTED_EXTENSIONS
 from ..exporters import markdown_exporter, docx_exporter, pdf_exporter
 from ..storage.file_storage import get_application_folder
 from ..services.cv_layout import service as cv_layout
-from ..services.cv_layout.options import LayoutOptions, TARGET_TWO_PAGE
+from ..services.cv_layout.options import LayoutOptions, TARGET_PREFERRED
 from .cv import MEDIA_TYPES, layout_file_response
 from ..services.matching.grounding import (
     grounded_analysis, grounded_scorecard, ground_job_analysis, ground_scorecard, ground_requirements,
@@ -1258,9 +1258,9 @@ def export_application(app_id: int, fmt: str, section: str = "cover-letter", tar
         raise HTTPException(status_code=400, detail=f"Unsupported format: {fmt}")
 
     if section in ("custom-cv", "tailored-cv"):
-        # A per-job CV: same layout pipeline as the Master CV, aiming for two
-        # pages by default.
-        options = LayoutOptions.from_params(target, spacing, order, hide, default_target=TARGET_TWO_PAGE)
+        # A per-job CV: same layout pipeline as the Master CV, aiming by
+        # default for the length set in Career Profile > Style.
+        options = LayoutOptions.from_params(target, spacing, order, hide, default_target=TARGET_PREFERRED)
         path, _ = cv_layout.export(db, content, fmt, folder / f"{safe_section}.{fmt}", options)
     elif fmt == "md":
         path = markdown_exporter.export(content, folder / f"{safe_section}.md")

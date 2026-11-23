@@ -2,13 +2,14 @@
 same preparation and fitting."""
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from .fit import FitResult, choose_spacing, prepare
 from .normalize import normalize_structure, section_names
-from .options import LayoutOptions
+from .options import PREFERRED_LENGTH_TARGETS, TARGET_PREFERRED, TARGET_TWO_PAGE, LayoutOptions
 
 
 def credential_records(db: Session) -> tuple[list[dict], list[dict]]:
@@ -27,9 +28,23 @@ def normalize_for_display(db: Session, md: str | None) -> str | None:
     return normalize_structure(md, certs, training)
 
 
+def preferred_target(db: Session) -> str:
+    """The page target matching Career Profile > Style > Preferred CV length."""
+    from ...models.profile import StylePreferences
+    style = db.query(StylePreferences).first()
+    return PREFERRED_LENGTH_TARGETS.get(getattr(style, "preferred_cv_length", None), TARGET_TWO_PAGE)
+
+
+def resolve_target(db: Session, options: LayoutOptions) -> LayoutOptions:
+    if options.target != TARGET_PREFERRED:
+        return options
+    return dataclasses.replace(options, target=preferred_target(db))
+
+
 def layout(db: Session, md: str, options: LayoutOptions) -> tuple[str, FitResult, list[str]]:
     """(markdown exactly as rendered, fit result, all section names in the
     document before any were hidden - for the ordering/inclusion control)."""
+    options = resolve_target(db, options)
     certs, training = credential_records(db)
     full = normalize_structure(md, certs, training)
     prepared = prepare(full, options, certs, training)

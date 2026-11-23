@@ -5,11 +5,14 @@ single column, A4, 17 mm side margins, 10.5 pt left-aligned body text, no
 tables or text boxes (role dates sit on a right-aligned tab stop, not in a
 table cell), so reading order and text extraction stay linear.
 
-Word does its own pagination, so instead of measuring, pagination is
-expressed as paragraph properties Word honours: headings, role lines and
-sub-group labels "keep with next"; every paragraph has widow/orphan control;
-nothing larger is forced to keep together. Blank markdown lines no longer
-become empty paragraphs - spacing comes from paragraph spacing only.
+Word does its own pagination, so the page-break decisions are taken from the
+PDF renderer laying out the same blocks (see pdf_exporter's SECTION_START_MIN_ROOM
+and KEEP_TOGETHER_MAX): a page break is placed before the same headings,
+roles and bullets, and short units (a role with its bullets, a project with
+its detail lines) are chained with "keep with next" so Word won't split them
+either. Headings, role lines and sub-group labels always keep with next;
+every paragraph has widow/orphan control. Blank markdown lines don't become
+empty paragraphs - spacing comes from paragraph spacing only.
 """
 from __future__ import annotations
 
@@ -131,8 +134,10 @@ def export(markdown_content: str, output_path: str | Path, options: LayoutOption
     blocks = cvblocks.parse(markdown_content)
     from .pdf_exporter import letter_spacing
     sp = letter_spacing(blocks, sp)
+    breaks, keep_next = _pagination_plan(blocks, sp)
     for j, b in enumerate(blocks):
         prev = blocks[j - 1].kind if j else ""
+        para = None
         if b.kind == "pagebreak":
             doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
         elif b.kind == "name":
@@ -181,9 +186,31 @@ def export(markdown_content: str, output_path: str | Path, options: LayoutOption
         elif b.kind == "para":
             para = _fmt(doc.add_paragraph(), sp, after=sp.paragraph_after)
             _add_inline(para, b.text)
+        if para is not None:
+            if j in breaks:
+                para.paragraph_format.page_break_before = True
+            if j in keep_next:
+                para.paragraph_format.keep_with_next = True
 
     doc.save(str(p))
     return p
+
+
+def _pagination_plan(blocks: list, sp: Spacing) -> tuple[set[int], set[int]]:
+    """(blocks the PDF layout starts on a new page, blocks to keep with the
+    next one so a short unit stays whole)."""
+    from .pdf_exporter import KEEP_TOGETHER_MAX, _Renderer
+    r = _Renderer(sp)
+    r.render(blocks)
+    breaks = {j for j in r.breaks if blocks[j].kind != "pagebreak"}
+    keep_next: set[int] = set()
+    for j, b in enumerate(blocks):
+        if b.kind not in ("role", "group", "bullet", "entry"):
+            continue
+        end = r._unit_end(blocks, j)
+        if end - j > 1 and r._span(blocks, j, end) <= KEEP_TOGETHER_MAX * r._usable:
+            keep_next.update(range(j, end - 1))
+    return breaks, keep_next
 
 
 def _strip(text: str) -> str:

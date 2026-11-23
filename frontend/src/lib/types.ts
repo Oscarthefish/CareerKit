@@ -593,5 +593,5 @@ export interface CVLayoutResult {
   markdown: string
   sections: string[]
   fit: CVFit
-  options: { target: string; spacing: string }
+  options: { target: string; spacing: string; resolved_target?: string }
 }

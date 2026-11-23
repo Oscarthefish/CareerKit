@@ -219,10 +219,17 @@ class SelectResponsibilitiesTests(unittest.TestCase):
 
 
 class SelectProjectsTests(unittest.TestCase):
-    def test_keeps_only_cited_projects_when_there_are_several(self):
-        projects = [{"name": "A"}, {"name": "B"}, {"name": "C"}]
+    def test_tops_up_to_the_minimum_when_few_are_cited(self):
+        # Showing only the cited project (or none) left CVs with a bare or
+        # empty Projects section once a profile had several projects.
+        projects = [{"name": "A"}, {"name": "B"}, {"name": "C"}, {"name": "D"}]
         result = select_projects(projects, {"a": 1.0})
-        self.assertEqual([p["name"] for p in result], ["A"])
+        self.assertEqual([p["name"] for p in result], ["A", "B", "C"])
+
+    def test_keeps_every_cited_project_beyond_the_minimum(self):
+        projects = [{"name": n} for n in "ABCDE"]
+        result = select_projects(projects, {"a": 1.0, "b": 1.0, "c": 1.0, "e": 1.0})
+        self.assertEqual([p["name"] for p in result], ["A", "B", "C", "E"])
 
     def test_keeps_uncited_project_when_there_are_two_or_fewer(self):
         projects = [{"name": "SOC Analyst Toolbox"}]
