@@ -179,6 +179,12 @@ _BASE_BANNED_PHRASES = [
         "world-class",
         "best-in-class",
         "unparalleled",
+        "my expertise",
+        "extensive experience",
+        "a wealth of",
+        "to the table",
+        "operations expert",
+        "security expert",
 ]
 
 

@@ -104,7 +104,47 @@ def _force_correct_leadership_line(content: str, skills: list[dict]) -> str:
     return _force_correct_key_skills_category_line(content, "Leadership & People", leadership_names)
 
 
-def _force_correct_projects(content: str, projects: list[dict]) -> str:
+# Compact job-CV project entries: a short description and a single detail
+# line, instead of four labelled lines - three projects in the full format
+# ran to ~30 lines and pushed a 3-page CV onto a fourth page.
+COMPACT_PROJECT_MAX_WORDS = 45
+COMPACT_PROJECT_MAX_TECH = 5
+
+
+def _compact_description(description: str) -> str:
+    """The first sentence or two of a project description, within
+    COMPACT_PROJECT_MAX_WORDS; never cut mid-sentence unless the first
+    sentence alone is longer than that."""
+    sentences = re.split(r"(?<=[.!?])\s+", description.strip())
+    out: list[str] = []
+    for s in sentences:
+        if out and len(" ".join(out + [s]).split()) > COMPACT_PROJECT_MAX_WORDS:
+            break
+        out.append(s)
+        if len(out) == 2:
+            break
+    text = " ".join(out)
+    words = text.split()
+    if len(words) > COMPACT_PROJECT_MAX_WORDS:
+        text = " ".join(words[:COMPACT_PROJECT_MAX_WORDS]).rstrip(",;:") + "..."
+    return text
+
+
+def _compact_project_block(p: dict) -> str:
+    name = (p.get("name") or "").strip()
+    description = _compact_description(p.get("description") or "")
+    block = f"- **{name}**" + (f" — {description}" if description else "")
+    detail = []
+    technologies = [t for t in (p.get("technologies") or []) if t][:COMPACT_PROJECT_MAX_TECH]
+    if technologies:
+        detail.append(", ".join(technologies))
+    url = (p.get("url") or "").strip()
+    if url:
+        detail.append(re.sub(r"^https?://(www\.)?", "", url).rstrip("/"))
+    return block + (f"\n  {' · '.join(detail)}" if detail else "")
+
+
+def _force_correct_projects(content: str, projects: list[dict], compact: bool = False) -> str:
     """Safety net: cv_generation.md asks for each project as "- **Name** —
     ...", with its url included and role/technologies mentioned where useful
     - but the model has been observed dropping the bold name and the
@@ -122,6 +162,9 @@ def _force_correct_projects(content: str, projects: list[dict]) -> str:
     for p in projects:
         name = (p.get("name") or "").strip()
         if not name:
+            continue
+        if compact:
+            blocks.append(_compact_project_block(p))
             continue
         description = (p.get("description") or "").strip()
         block = f"- **{name}**" + (f" — {description}" if description else "")
@@ -144,7 +187,9 @@ def _force_correct_projects(content: str, projects: list[dict]) -> str:
     correct_block = "\n".join(blocks)
     if not pattern.search(content):
         return content
-    return pattern.sub(lambda m: m.group(1) + correct_block + "\n", content, count=1)
+    # Keep a blank line before the next heading, as written.
+    return pattern.sub(lambda m: m.group(1) + correct_block + ("\n\n" if m.end() < len(m.string) else "\n"),
+                       content, count=1)
 
 
 _INLINE_KEY_SKILLS_LABELS = ("Security Operations & Incident Response", "Security Domains", "Leadership & People")
@@ -203,6 +248,11 @@ def _strip_unbolded_key_skills_duplicate_lines(content: str) -> str:
 def _significant_words(text: str) -> set[str]:
     words = (raw.strip(".,;:()\"'").lower() for raw in (text or "").split())
     return {w for w in words if len(w) > 3 and w not in _STOPWORDS}
+
+
+def _stems(text: str) -> set[str]:
+    """Significant words cut to a 5-letter stem ("building" -> "build")."""
+    return {w[:5] for w in _significant_words(text)}
 
 
 def _build_achievement_bullet(title: str, detail: str) -> str:
@@ -309,7 +359,10 @@ def _dedupe_achievement_bullets(content: str, achievements: list[dict]) -> str:
     lines = section_body.split("\n")
 
     titles_lower = [(a.get("title") or "").strip().lower() for a in achievements if (a.get("title") or "").strip()]
-    title_word_sets = [_significant_words(t) for t in titles_lower]
+    # Compared as stems so "Contributed to building..." matches the title
+    # "Helped build..." (real regression: 0.71 on whole words, just under the
+    # 0.75 bar below, so a reworded duplicate survived).
+    title_word_sets = [_stems(t) for t in titles_lower]
 
     def _starts_with_a_title(line: str) -> bool:
         text = line.lstrip("-").strip().lower()
@@ -322,10 +375,10 @@ def _dedupe_achievement_bullets(content: str, achievements: list[dict]) -> str:
         if not line.strip().startswith("-") or _starts_with_a_title(line):
             kept.append(line)
             continue
-        words = _significant_words(line)
+        words = _stems(line)
         is_dup = False
         for t_line in titled_lines:
-            t_words = _significant_words(t_line)
+            t_words = _stems(t_line)
             if not words or not t_words:
                 continue
             # Divide by the smaller word set rather than always the candidate
@@ -1171,7 +1224,7 @@ def apply_custom_cv_safety_nets(content: str, profile: dict, jd_terminology: lis
     content = _strip_trailing_line_commas(content)
     non_dataless_roles = _non_dataless_roles(profile.get("work_experience", []))
     content = _force_selected_technologies(content, profile.get("platforms_and_tools_display", []))
-    content = _force_correct_projects(content, profile.get("projects", []))
+    content = _force_correct_projects(content, profile.get("projects", []), compact=True)
     content = _remove_fabricated_role_headings(content, non_dataless_roles)
     content = _ensure_all_roles_present(content, non_dataless_roles)
     content = _enrich_achievement_bullets(content, profile.get("achievements", []))

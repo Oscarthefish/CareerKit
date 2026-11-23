@@ -174,6 +174,21 @@ class ProjectsTests(unittest.TestCase):
         md = "## A\nx\n\n## PROJECTS\n\n## CERTIFICATIONS & TRAINING\ny\n"
         self.assertEqual(_force_correct_projects(md, []), "## A\nx\n\n## CERTIFICATIONS & TRAINING\ny\n")
 
+    def test_job_cv_projects_are_compact(self):
+        # Three projects in the full labelled format ran to ~30 lines and
+        # pushed a 3-page CV onto a fourth page.
+        project = {"name": "Mail Triage", "url": "https://github.com/example/mail-triage",
+                   "description": "A local email triage tool. It parses headers and extracts IOCs. "
+                                  "It also checks SPF, DKIM and DMARC. A fourth sentence that is dropped.",
+                   "technologies": ["Python", "YARA", "SPF", "DKIM", "DMARC", "Streamlit"],
+                   "role": "Creator", "outcomes": "Built it."}
+        out = _force_correct_projects("## PROJECTS\n- x\n\n## NEXT\ny\n", [project], compact=True)
+        self.assertEqual(out, "## PROJECTS\n- **Mail Triage** — A local email triage tool. It parses headers and "
+                              "extracts IOCs.\n  Python, YARA, SPF, DKIM, DMARC · github.com/example/mail-triage\n"
+                              "\n## NEXT\ny\n")
+        full = _force_correct_projects("## PROJECTS\n- x\n", [project])
+        self.assertIn("  Role: Creator", full)
+
     def test_layout_drops_any_empty_section(self):
         md = "# A\nx@example.com\n\n## PROFILE\nHi\n\n## PROJECTS\n\n## COMMUNITY INVOLVEMENT\n- T\n"
         self.assertNotIn("PROJECTS", normalize_structure(md))
