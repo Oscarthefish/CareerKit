@@ -154,7 +154,7 @@ export const brutalReview = () => request('/api/cv/review', { method: 'POST' })
 export const checkATSHealth = () => request('/api/cv/ats-check', { method: 'POST' })
 // Layout options shared by every CV preview and export (see CVLayoutPanel).
 export interface CVLayoutParams {
-  target?: 'two_page' | 'unrestricted'
+  target?: 'preferred' | 'one_page' | 'two_page' | 'three_page' | 'unrestricted'
   spacing?: 'standard' | 'compact'
   order?: string[]
   hide?: string[]

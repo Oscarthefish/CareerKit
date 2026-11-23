@@ -51,6 +51,18 @@ BULLET_INDENT = 4.5
 ENTRY_HANG = 4.5
 MIN_SPLIT_LINES = 2
 
+# Page-break rules (fractions of the usable page height):
+# - A section starts on the current page only if the whole section fits, or
+#   at least this much of the page is left AND its opening unit fits there.
+#   Otherwise it starts on a fresh page instead of a few lines at the bottom.
+SECTION_START_MIN_ROOM = 1 / 3
+# - A role (header + its bullets), or a project bullet with its detail lines,
+#   moves to the next page whole rather than splitting - unless it is longer
+#   than this, in which case it may split after its header and first bullets.
+KEEP_TOGETHER_MAX = 0.45
+# - Opening bullets kept with a role header when a long role has to split.
+ROLE_LEAD_BULLETS = 3
+
 
 class CVPDF(FPDF):
     def header(self):
@@ -106,6 +118,9 @@ class _Renderer:
         pdf.set_auto_page_break(auto=True, margin=MARGIN_BOTTOM)
         pdf.add_page()
         self.pdf = pdf
+        # Block indices a page break was inserted before (the DOCX export
+        # mirrors these so both formats break in the same places).
+        self.breaks: list[int] = []
 
     # -- measuring -------------------------------------------------------
     def _remaining(self) -> float:
@@ -163,27 +178,100 @@ class _Renderer:
     def _role_lines(self, role, org, dates) -> int:
         return self._lines(self._role_left(role, org), TEXT_W - self._date_width(dates), ROLE_PT)
 
-    def first_content_height(self, blocks: list, j: int) -> float:
-        """Height that must fit along with a heading: the role/group header
-        that follows plus the opening lines of its content."""
-        if j >= len(blocks):
-            return 0.0
-        b = blocks[j]
+    # -- page-break planning ------------------------------------------------
+    @property
+    def _usable(self) -> float:
+        return self.pdf.page_break_trigger - MARGIN_TOP
+
+    def block_height(self, blocks: list, j: int) -> float:
+        """Vertical space block j takes when drawn (mirrors render())."""
+        b, sp = blocks[j], self.sp
+        prev = blocks[j - 1].kind if j else ""
+        if b.kind == "section":
+            return sp.section_before + 5.8 + sp.section_after
         if b.kind == "role":
-            return self.role_height(b) + self.first_content_height(blocks, j + 1)
+            return (0 if prev == "section" else sp.role_before) + (self.role_height(b) - sp.role_before) + 0.6
         if b.kind == "group":
-            return self.sp.group_before + self.sp.line + self.first_content_height(blocks, j + 1)
-        if b.kind in ("bullet", "entry", "para", "continuation"):
-            n = self.block_lines(b)
-            keep = n if n <= 3 else MIN_SPLIT_LINES
-            return keep * self.sp.line
+            return (0 if prev == "section" else sp.group_before) + sp.line
+        if b.kind in ("bullet", "entry", "continuation"):
+            return self.block_lines(b) * sp.line + sp.bullet_after
+        if b.kind == "para":
+            return self.block_lines(b) * sp.line + sp.paragraph_after
         return 0.0
 
-    def _ensure(self, needed: float):
-        if not self._at_page_top() and needed > self._remaining():
-            self.pdf.add_page()
+    def _span(self, blocks: list, start: int, stop: int) -> float:
+        return sum(self.block_height(blocks, k) for k in range(start, stop))
 
-    def _place_flow(self, n_lines: int):
+    @staticmethod
+    def _unit_end(blocks: list, j: int) -> int:
+        """Index just past the unit starting at j: a section runs to the next
+        section; a role to the next role/group/section; a bullet or entry
+        takes its indented continuation lines with it."""
+        kind = blocks[j].kind
+        k = j + 1
+        if kind == "section":
+            stops = ("section", "pagebreak")
+        elif kind in ("role", "group"):
+            stops = ("section", "role", "group", "pagebreak")
+        else:
+            while k < len(blocks) and blocks[k].kind == "continuation":
+                k += 1
+            return k
+        while k < len(blocks) and blocks[k].kind not in stops:
+            k += 1
+        return k
+
+    def _lead_height(self, blocks: list, j: int) -> float:
+        """The least of the unit at j that must sit on the same page as
+        whatever precedes it: the whole unit if it's short enough to keep
+        together, else its header plus its first few items."""
+        if j >= len(blocks) or blocks[j].kind in ("section", "pagebreak"):
+            return 0.0
+        end = self._unit_end(blocks, j)
+        whole = self._span(blocks, j, end)
+        if whole <= KEEP_TOGETHER_MAX * self._usable:
+            return whole
+        kind = blocks[j].kind
+        if kind in ("role", "group"):
+            lead_end, items = j + 1, 0
+            while lead_end < end and items < ROLE_LEAD_BULLETS:
+                lead_end = self._unit_end(blocks, lead_end)
+                items += 1
+            return self._span(blocks, j, lead_end)
+        # A long single paragraph/bullet may split, keeping a couple of lines.
+        return self.block_height(blocks, j) if self.block_lines(blocks[j]) <= 3 else MIN_SPLIT_LINES * self.sp.line
+
+    def _break(self, j: int):
+        self.pdf.add_page()
+        self.breaks.append(j)
+
+    def _ensure(self, needed: float, j: int):
+        if not self._at_page_top() and needed > self._remaining() + 0.01:
+            self._break(j)
+
+    def _place_section(self, blocks: list, j: int):
+        if self._at_page_top():
+            return
+        remaining = self._remaining() + 0.01
+        if self._span(blocks, j, self._unit_end(blocks, j)) <= remaining:
+            return
+        opening = self.block_height(blocks, j) + self._lead_height(blocks, j + 1)
+        if remaining >= SECTION_START_MIN_ROOM * self._usable and opening <= remaining:
+            return
+        self._break(j)
+
+    def _place_unit(self, blocks: list, j: int):
+        """Before a role/group/bullet/entry: keep it whole on this page if it
+        fits, else move it whole to the next page when it's short enough to
+        keep together, else make sure at least its lead fits here."""
+        if self._at_page_top():
+            return
+        whole = self._span(blocks, j, self._unit_end(blocks, j))
+        if whole <= self._remaining() + 0.01:
+            return
+        self._ensure(self._lead_height(blocks, j), j)
+
+    def _place_flow(self, n_lines: int, j: int = -1):
         """Before a splittable text block: page-break first unless it fits,
         or unless at least two lines stay on each side of the split."""
         if self._at_page_top():
@@ -193,16 +281,14 @@ class _Renderer:
             return
         if n_lines > 3 and fit >= MIN_SPLIT_LINES and n_lines - fit >= MIN_SPLIT_LINES:
             return
-        self.pdf.add_page()
+        self._break(j)
 
     # -- drawing ---------------------------------------------------------
     def render(self, blocks: list[cvblocks.Block]):
         pdf, sp = self.pdf, self.sp
         for j, b in enumerate(blocks):
-            nxt_h = lambda: self.first_content_height(blocks, j + 1)  # noqa: E731
-
             if b.kind == "pagebreak":
-                pdf.add_page()
+                self._break(j)
             elif b.kind == "name":
                 pdf.set_font("Helvetica", "B", NAME_PT)
                 pdf.set_text_color(*NAVY)
@@ -223,8 +309,7 @@ class _Renderer:
                 pdf.line(MARGIN_X, pdf.get_y(), PAGE_W - MARGIN_X, pdf.get_y())
                 pdf.ln(0.5)
             elif b.kind == "section":
-                head_h = sp.section_before + 6 + sp.section_after
-                self._ensure(head_h + nxt_h())
+                self._place_section(blocks, j)
                 if not self._at_page_top():
                     pdf.ln(sp.section_before)
                 pdf.set_font("Helvetica", "B", SECTION_PT)
@@ -236,7 +321,8 @@ class _Renderer:
                 pdf.ln(0.3 + sp.section_after)
             elif b.kind == "role":
                 role, org, dates = b.parts
-                self._ensure(self.role_height(b) + nxt_h())
+                if blocks[j - 1].kind != "section":
+                    self._place_unit(blocks, j)
                 if not self._at_page_top() and blocks[j - 1].kind != "section":
                     pdf.ln(sp.role_before)
                 date_w = self._date_width(dates)
@@ -254,7 +340,8 @@ class _Renderer:
                     pdf.set_xy(MARGIN_X, y1)
                 pdf.ln(0.6)
             elif b.kind == "group":
-                self._ensure(sp.group_before + sp.line + nxt_h())
+                if blocks[j - 1].kind != "section":
+                    self._place_unit(blocks, j)
                 if not self._at_page_top() and blocks[j - 1].kind != "section":
                     pdf.ln(sp.group_before)
                 pdf.set_font("Helvetica", "B", GROUP_PT)
@@ -262,7 +349,8 @@ class _Renderer:
                 pdf.cell(0, sp.line, _clean(b.text), new_x="LMARGIN", new_y="NEXT")
             elif b.kind == "entry":
                 lines = self._wrap_hanging(b.text, BODY_PT)
-                self._place_flow(len(lines))
+                self._place_unit(blocks, j)
+                self._place_flow(len(lines), j)
                 pdf.set_font("Helvetica", "", BODY_PT)
                 pdf.set_text_color(*DARK)
                 for k, line in enumerate(lines):
@@ -271,7 +359,9 @@ class _Renderer:
                 pdf.ln(sp.bullet_after)
             elif b.kind in ("bullet", "continuation"):
                 n = self.block_lines(b)
-                self._place_flow(n)
+                if b.kind == "bullet":
+                    self._place_unit(blocks, j)
+                self._place_flow(n, j)
                 pdf.set_font("Helvetica", "", BODY_PT)
                 pdf.set_text_color(*DARK)
                 if b.kind == "bullet":
@@ -282,7 +372,7 @@ class _Renderer:
                                markdown=True, align="L", new_x="LMARGIN", new_y="NEXT")
                 pdf.ln(sp.bullet_after)
             elif b.kind == "para":
-                self._place_flow(self.block_lines(b))
+                self._place_flow(self.block_lines(b), j)
                 pdf.set_font("Helvetica", "", BODY_PT)
                 pdf.set_text_color(*DARK)
                 pdf.multi_cell(TEXT_W, sp.line, _prep_markdown(b.text), markdown=True, align="L",

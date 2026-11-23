@@ -184,15 +184,46 @@ def select_responsibilities(work_experience: list[dict], source_scores: dict[str
     return trimmed
 
 
-def select_projects(projects: list[dict], source_scores: dict[str, float]) -> list[dict]:
-    """Keep a project only if it's cited by a requirement - unless there are
-    so few projects overall (<=2) that dropping the only portfolio evidence
-    would do more harm than including something slightly less relevant."""
-    scored = [(p, score_for_name(p.get("name", ""), source_scores)) for p in projects]
-    cited = [p for p, sc in scored if sc > 0]
-    if cited or len(projects) > 2:
+# Projects are portfolio evidence, and Job Match rarely cites them directly
+# (requirements are matched to work history and skills first). Showing none
+# at all - or an empty heading - undersells the candidate, so keep at least
+# this many, backfilled by how much each project's own text overlaps the
+# advert's requirements.
+MIN_PROJECTS = 3
+
+# Words every security advert and project shares - they say nothing about fit.
+_PROJECT_STOP = {"with", "from", "that", "this", "into", "across", "using", "and", "the", "for", "your",
+                 "their", "will", "able", "ability", "work", "working", "experience", "knowledge", "strong",
+                 "excellent", "skills", "related", "field", "personal", "team", "teams", "cyber", "security",
+                 "information", "technologies", "technology", "tools", "data", "level", "years"}
+
+
+def _project_words(text: str) -> set[str]:
+    """Word stems (first 6 letters), so "investigations" matches "investigation"."""
+    return {w[:6] for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 3 and w not in _PROJECT_STOP}
+
+
+def _project_overlap(project: dict, requirement_words: set[str]) -> int:
+    text = " ".join([project.get("name") or "", project.get("description") or "",
+                     " ".join(project.get("technologies") or [])])
+    return len(_project_words(text) & requirement_words)
+
+
+def select_projects(projects: list[dict], source_scores: dict[str, float],
+                    requirement_coverage: list[dict] | None = None) -> list[dict]:
+    """Every project cited by a requirement, topped up to MIN_PROJECTS with the
+    uncited projects whose own text best overlaps the advert's requirements
+    (ties keep profile order). Order follows the profile."""
+    cited = [p for p in projects if score_for_name(p.get("name", ""), source_scores) > 0]
+    if len(cited) >= MIN_PROJECTS or len(cited) == len(projects):
         return cited
-    return list(projects)
+    requirement_words: set[str] = set()
+    for row in requirement_coverage or []:
+        requirement_words |= _project_words(f"{row.get('name') or ''} {row.get('label') or ''}")
+    rest = [p for p in projects if p not in cited]
+    ranked = sorted(rest, key=lambda p: -_project_overlap(p, requirement_words))
+    chosen = cited + ranked[:MIN_PROJECTS - len(cited)]
+    return [p for p in projects if p in chosen]
 
 
 # See MIN_SKILLS above for why a floor matters here too: sparse evidence
@@ -333,7 +364,7 @@ def select_evidence_for_cv(profile: dict, requirement_coverage: list[dict]) -> d
     selected["skills"] = select_skills(profile.get("skills", []), scores)
     selected["achievements"] = select_achievements(profile.get("achievements", []), scores)
     selected["work_experience"] = select_responsibilities(profile.get("work_experience", []), scores)
-    selected["projects"] = select_projects(profile.get("projects", []), scores)
+    selected["projects"] = select_projects(profile.get("projects", []), scores, requirement_coverage)
     tool_skills = [s for s in profile.get("skills", []) if s.get("category") == "tool"]
     selected["platforms_and_tools_display"] = select_platforms_and_tools(
         profile.get("platforms_and_tools_display", []), scores,

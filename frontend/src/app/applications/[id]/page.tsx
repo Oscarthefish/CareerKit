@@ -739,7 +739,7 @@ function CustomCvPanel({
             <CVLayoutPanel
               markdown={cvResult.custom_cv}
               storageKey="application-cv"
-              defaultTarget="two_page"
+              defaultTarget="preferred"
               exportUrl={(fmt, params) => exportApplication(appId, fmt, 'custom-cv', params)}
               actions={<button onClick={startEditing} className="btn-ghost btn-sm">Edit</button>}
             />
@@ -1081,7 +1081,7 @@ function TabCVNotes({ app, refresh, appId }: { app: JobApplication; refresh: () 
             <CVLayoutPanel
               markdown={app.tailored_cv}
               storageKey="application-cv"
-              defaultTarget="two_page"
+              defaultTarget="preferred"
               exportUrl={(fmt, params) => exportApplication(appId, fmt, 'tailored-cv', params)}
             />
           </div>

@@ -111,8 +111,13 @@ def _force_correct_projects(content: str, projects: list[dict]) -> str:
     labelled role/technologies/outcomes/url lines on some regenerations.
     Rebuild the section deterministically from the profile's project data
     instead of trusting free-text retyping."""
+    # Body runs to the next "## " heading at a line start (not via "\n## ", which
+    # a blank line after the heading would already have consumed).
+    pattern = re.compile(r"(^## PROJECTS[ \t]*\n)(.*?)(?=^## |\Z)", re.MULTILINE | re.DOTALL)
     if not projects:
-        return content
+        # No project data: leave the text alone, except an empty heading,
+        # which would print as a bare rule.
+        return pattern.sub(lambda m: m.group(0) if m.group(2).strip() else "", content, count=1)
     blocks = []
     for p in projects:
         name = (p.get("name") or "").strip()
@@ -137,7 +142,6 @@ def _force_correct_projects(content: str, projects: list[dict]) -> str:
     if not blocks:
         return content
     correct_block = "\n".join(blocks)
-    pattern = re.compile(r"(^## PROJECTS\s*\n)(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
     if not pattern.search(content):
         return content
     return pattern.sub(lambda m: m.group(1) + correct_block + "\n", content, count=1)
@@ -1345,7 +1349,8 @@ def cv_layout_check(body: LayoutRequest, db: Session = Depends(get_db)):
     options = LayoutOptions.from_params(body.target, body.spacing, body.order, body.hide)
     prepared, fit, sections = cv_layout.layout(db, body.markdown, options)
     return {"markdown": prepared, "sections": sections, "fit": fit.to_dict(),
-            "options": {"target": options.target, "spacing": options.spacing}}
+            "options": {"target": options.target, "spacing": options.spacing,
+                        "resolved_target": cv_layout.resolve_target(db, options).target}}
 
 
 def layout_file_response(path, filename: str, media_type: str, inline: bool) -> FileResponse:

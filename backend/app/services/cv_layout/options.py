@@ -8,9 +8,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+TARGET_ONE_PAGE = "one_page"
 TARGET_TWO_PAGE = "two_page"
+TARGET_THREE_PAGE = "three_page"
 TARGET_UNRESTRICTED = "unrestricted"
-TARGETS = (TARGET_TWO_PAGE, TARGET_UNRESTRICTED)
+# Resolved to one of the page targets from Career Profile > Style >
+# Preferred CV length (see service.resolve_target) - the default for job CVs,
+# so the layout target and the generation prompt's length always agree.
+TARGET_PREFERRED = "preferred"
+TARGETS = (TARGET_ONE_PAGE, TARGET_TWO_PAGE, TARGET_THREE_PAGE, TARGET_UNRESTRICTED, TARGET_PREFERRED)
+PAGE_TARGETS = {TARGET_ONE_PAGE: 1, TARGET_TWO_PAGE: 2, TARGET_THREE_PAGE: 3}
+# style_preferences.preferred_cv_length -> layout target
+PREFERRED_LENGTH_TARGETS = {"1-page": TARGET_ONE_PAGE, "2-pages": TARGET_TWO_PAGE, "3-pages": TARGET_THREE_PAGE}
 
 SPACING_STANDARD = "standard"
 SPACING_COMPACT = "compact"
@@ -56,7 +65,7 @@ class LayoutOptions:
 
     @property
     def target_pages(self) -> int | None:
-        return 2 if self.target == TARGET_TWO_PAGE else None
+        return PAGE_TARGETS.get(self.target)
 
     @property
     def spacing_values(self) -> Spacing:

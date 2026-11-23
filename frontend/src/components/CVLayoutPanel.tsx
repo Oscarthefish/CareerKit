@@ -10,7 +10,7 @@ import CVRenderer from './CVRenderer'
 import { cvLayout, type CVLayoutParams } from '@/lib/api'
 import type { CVLayoutResult } from '@/lib/types'
 
-type Target = 'two_page' | 'unrestricted'
+type Target = 'preferred' | 'one_page' | 'two_page' | 'three_page' | 'unrestricted'
 type SpacingPreset = 'standard' | 'compact'
 
 interface Props {
@@ -28,12 +28,19 @@ interface Saved {
   spacing: SpacingPreset
   order: string[]
   hide: string[]
+  /** Bumped when the target choices change, so an old remembered target
+   * (e.g. the former fixed "two_page" job-CV default) isn't kept by accident. */
+  targetVersion?: number
 }
+
+const TARGET_VERSION = 2
 
 function load(key: string, fallback: Saved): Saved {
   try {
     const raw = window.localStorage.getItem(`careerkit:cv-layout:${key}`)
-    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback
+    if (!raw) return fallback
+    const saved = { ...fallback, ...JSON.parse(raw) } as Saved
+    return saved.targetVersion === TARGET_VERSION ? saved : { ...saved, target: fallback.target, targetVersion: TARGET_VERSION }
   } catch {
     return fallback
   }
@@ -50,7 +57,7 @@ function store(key: string, value: Saved) {
 const titleCase = (s: string) => s.toLowerCase().replace(/(^|\s|&|\/)(\w)/g, (m) => m.toUpperCase())
 
 export default function CVLayoutPanel({ markdown, storageKey, defaultTarget, exportUrl, actions }: Props) {
-  const fallback: Saved = { target: defaultTarget, spacing: 'standard', order: [], hide: [] }
+  const fallback: Saved = { target: defaultTarget, spacing: 'standard', order: [], hide: [], targetVersion: TARGET_VERSION }
   const [opts, setOpts] = useState<Saved>(fallback)
   const [ready, setReady] = useState(false)
   const [result, setResult] = useState<CVLayoutResult | null>(null)
@@ -119,6 +126,9 @@ export default function CVLayoutPanel({ markdown, storageKey, defaultTarget, exp
     update({ hide: opts.hide.includes(name) ? opts.hide.filter((h) => h !== name) : [...opts.hide, name] })
 
   const fit = result?.fit
+  const resolvedPages = ({ one_page: 1, two_page: 2, three_page: 3 } as Record<string, number>)[
+    result?.options?.resolved_target ?? ''
+  ]
   const hiddenCount = opts.hide.filter((h) => allSections.includes(h)).length
 
   return (
@@ -129,7 +139,12 @@ export default function CVLayoutPanel({ markdown, storageKey, defaultTarget, exp
           <div>
             <label className="label">Target length</label>
             <select className="input text-sm" value={opts.target} onChange={(e) => update({ target: e.target.value as Target })}>
-              <option value="two_page">Two-page application CV</option>
+              <option value="preferred">
+                Match my profile{resolvedPages ? ` (${resolvedPages} page${resolvedPages === 1 ? '' : 's'})` : ''}
+              </option>
+              <option value="one_page">One page</option>
+              <option value="two_page">Two pages</option>
+              <option value="three_page">Three pages</option>
               <option value="unrestricted">Unrestricted (master CV)</option>
             </select>
           </div>
