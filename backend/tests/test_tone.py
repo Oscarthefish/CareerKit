@@ -38,8 +38,21 @@ class ToneDownTests(unittest.TestCase):
         self.check("Built a world-class team.", "Built a team.")
         self.check("an unparalleled eye for detail", "an eye for detail")
 
+    def test_self_described_expert_and_padding(self):
+        # Real regression from a regenerated custom CV's profile paragraph.
+        self.check("I bring a wealth of experience to the table. As a security operations expert based in Auckland, "
+                   "I lead teams.",
+                   "I bring broad experience. As a security operations professional based in Auckland, I lead teams.")
+        self.check("My expertise spans incident response.", "My experience spans incident response.")
+        self.check("I have extensive experience in investigating incidents.",
+                   "I have experience in investigating incidents.")
+        self.check("One of my strongest areas of expertise is triage.",
+                   "One of my strongest areas of experience is triage.")
+        self.check("As an incident response expert, I led it.", "As an incident response professional, I led it.")
+
     def test_plain_and_role_wording_is_left_alone(self):
         for text in ("Skilled in incident response.", "Acted as subject matter expert for the SIEM.",
+                     "Acted as a subject matter expert for the SIEM.",
                      "Experienced analyst with expertise in EDR.", "", None):
             self.assertEqual(tone_down(text), text)
 

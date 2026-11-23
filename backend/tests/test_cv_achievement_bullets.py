@@ -345,6 +345,22 @@ class DedupeAchievementBulletsTests(unittest.TestCase):
         self.assertEqual(result.count("Cortex XDR"), 1)
         self.assertIn("Led Cortex XDR tenant migration", result)
 
+    def test_reworded_restatement_with_a_different_verb_form_is_dropped(self):
+        # Real regression: "Contributed to building..." scored 0.71 on whole
+        # words against the title "Helped build..." (bar 0.75) and survived,
+        # adding a leadership claim neither the title nor the record makes.
+        achievements = [{"title": "Helped build a global 24/7 SOC across three locations",
+                         "result": "Built out the 6-person local SOC team as part of the wider programme."}]
+        content = CV_TEMPLATE.format(bullets=(
+            "- Contributed to building a global 24/7 SOC across three locations by leading a team of junior "
+            "and mid-level analysts.\n"
+            "- Helped build a global 24/7 SOC across three locations. Built out the 6-person local SOC team as "
+            "part of the wider programme."
+        ))
+        result = _dedupe_achievement_bullets(content, achievements)
+        self.assertNotIn("Contributed to building", result)
+        self.assertIn("Helped build a global 24/7 SOC", result)
+
     def test_leaves_genuinely_distinct_bullets_alone(self):
         achievements = [{"title": "Led Cortex XDR tenant migration", "result": "Migrated endpoints cleanly."}]
         content = CV_TEMPLATE.format(bullets=(
