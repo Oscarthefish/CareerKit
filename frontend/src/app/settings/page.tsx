@@ -39,7 +39,13 @@ export default function SettingsPage() {
     checkAI()
   }
 
+  // Suggestions only when Ollama can't tell us what's installed.
   const COMMON_MODELS = ['llama3.1', 'llama3.1:70b', 'llama3', 'mistral', 'phi3', 'gemma2', 'qwen2.5']
+  // Ollama tags a default pull as ":latest"; the bare name selects the same model.
+  const shortName = (m: string) => m.replace(/:latest$/, '')
+  const installed = aiStatus?.status === 'ok' ? (aiStatus.available_models ?? []).map(shortName) : []
+  const choices = installed.length > 0 ? installed : COMMON_MODELS
+  const isSelected = (m: string) => shortName(form.ollama_model || '') === m
 
   return (
     <AppShell>
@@ -82,14 +88,10 @@ export default function SettingsPage() {
                     </div>
                   )}
                   {aiStatus.available_models?.length > 0 && (
-                    <div className="mt-2">
-                      <p className="text-xs text-gray-400 mb-1">Available models:</p>
-                      <div className="flex flex-wrap gap-1">
-                        {aiStatus.available_models.map((m) => (
-                          <span key={m} className="badge-gray text-xs">{m}</span>
-                        ))}
-                      </div>
-                    </div>
+                    <p className="text-xs text-gray-400">
+                      {aiStatus.available_models.length} model{aiStatus.available_models.length === 1 ? '' : 's'} installed
+                      {' '}· choose one under Model Name below
+                    </p>
                   )}
                 </>
               ) : (
@@ -128,13 +130,20 @@ export default function SettingsPage() {
               onChange={set('ollama_model')}
               placeholder="llama3.1"
             />
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {COMMON_MODELS.map((m) => (
+            <p className="text-xs text-gray-500 mt-2 mb-1">
+              {installed.length > 0
+                ? 'Installed in Ollama - click one to use it, then Save:'
+                : 'Suggestions (install with "ollama pull <name>" first):'}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {choices.map((m) => (
                 <button
                   key={m}
+                  type="button"
                   onClick={() => setForm({ ...form, ollama_model: m })}
+                  aria-pressed={isSelected(m)}
                   className={`px-2 py-0.5 rounded text-xs font-mono transition-colors ${
-                    form.ollama_model === m ? 'bg-brand-100 text-brand-800 font-semibold' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    isSelected(m) ? 'bg-brand-100 text-brand-800 font-semibold' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                   }`}
                 >
                   {m}
