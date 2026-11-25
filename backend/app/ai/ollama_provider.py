@@ -2,7 +2,7 @@ import json
 import re
 import httpx
 from typing import Callable, Optional
-from .base import AIProvider
+from .base import AIProvider, ModelError
 
 # Prepended to every system prompt. Local 8B models routinely drop style rules
 # that live in the middle of a long user prompt, so the language rule is stated
@@ -244,6 +244,33 @@ class OllamaProvider(AIProvider):
     def _system(self, system: Optional[str]) -> str:
         return f"{STYLE_SYSTEM}\n\n{system}".strip() if system else STYLE_SYSTEM
 
+    async def _post_chat(self, payload: dict) -> dict:
+        """POST /api/chat, turning every failure into a ModelError with a
+        message the user can act on (Ollama's own error text included)."""
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(f"{self.base_url}/api/chat", json=payload)
+        except httpx.ConnectError:
+            raise ModelError(f"Cannot connect to Ollama at {self.base_url}. Start it with: ollama serve")
+        except httpx.TimeoutException:
+            raise ModelError(f"The AI model '{self.model}' didn't respond within {int(self.timeout)} seconds.")
+        except httpx.HTTPError as e:
+            raise ModelError(f"Request to Ollama failed: {e}")
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get("error") or response.text
+            except ValueError:
+                detail = response.text
+            detail = (detail or f"HTTP {response.status_code}").strip()
+            if response.status_code == 404 and "not found" in detail.lower():
+                raise ModelError(f"The AI model '{self.model}' isn't installed in Ollama. "
+                                 f"Install it with: ollama pull {self.model}")
+            raise ModelError(f"The AI model '{self.model}' failed: {detail}")
+        try:
+            return response.json()
+        except ValueError:
+            raise ModelError(f"The AI model '{self.model}' returned a response that wasn't valid JSON.")
+
     async def _chat(self, messages: list[dict], temperature: float = 0.7) -> str:
         payload = {
             "model": self.model,
@@ -254,11 +281,8 @@ class OllamaProvider(AIProvider):
                 "num_ctx": self.num_ctx,
             },
         }
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(f"{self.base_url}/api/chat", json=payload)
-            response.raise_for_status()
-            data = response.json()
-            return data["message"]["content"]
+        data = await self._post_chat(payload)
+        return data["message"]["content"]
 
     async def generate(
         self,
@@ -364,11 +388,8 @@ class OllamaProvider(AIProvider):
                 },
             }
 
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(f"{self.base_url}/api/chat", json=payload)
-                response.raise_for_status()
-                data = response.json()
-                content = data["message"]["content"]
+            data = await self._post_chat(payload)
+            content = data["message"]["content"]
 
             content = re.sub(r"^```(?:json)?\s*", "", content.strip())
             content = re.sub(r"\s*```$", "", content.strip())

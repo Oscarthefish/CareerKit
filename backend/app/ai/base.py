@@ -2,6 +2,12 @@ from abc import ABC, abstractmethod
 from typing import Callable, Optional
 
 
+class ModelError(Exception):
+    """The AI model couldn't produce a response (failed to load, unreachable,
+    timed out). The message is written for the user and is returned to the
+    browser as-is (see main.py)."""
+
+
 class AIProvider(ABC):
 
     @abstractmethod
